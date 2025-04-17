@@ -1,0 +1,26 @@
+[workspace]
+members = ["pi_s", "pi_p"]
+resolver = "2"
+
+[workspace.package]
+authors = ["Georgio Nicolas <me@georgio.xyz>"]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+curve25519-dalek = {version = "4.1.3", features = ["rand_core"] }
+error-chain = "0.12.4"
+rand = "0.8.5"
+rand_chacha = "0.3.1"
+rayon = "1.10.0"
+zeroize = "1.8.1"
+
+[profile.release]
+lto = "fat"
+opt-level = 3
+codegen-units = 1
+
+[profile.bench]
+lto = "fat"
+opt-level = 3
+codegen-units = 1
