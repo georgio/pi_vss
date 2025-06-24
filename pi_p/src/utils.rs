@@ -34,16 +34,18 @@ pub fn batch_decompress_ristretto_points(
 
 pub fn generate_parties<R>(
     G: &RistrettoPoint,
+    g1: &RistrettoPoint,
+    g2: &RistrettoPoint,
+    g3: &RistrettoPoint,
     rng: &mut R,
     n: usize,
     t: usize,
-    pk0: &RistrettoPoint,
 ) -> Vec<Party>
 where
     R: CryptoRngCore + ?Sized,
 {
     (1..=n)
-        .map(|i| Party::new(G, rng, n, t, i, *pk0).unwrap())
+        .map(|i| Party::new(G, g1.clone(), g2.clone(), g3.clone(), rng, n, t, i).unwrap())
         .collect()
 }
 

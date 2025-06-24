@@ -1,43 +1,36 @@
 pub mod dealer;
-pub mod error;
 pub mod party;
-pub mod polynomial;
-pub mod utils;
 
 #[cfg(test)]
-
 mod tests {
     use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-    use rand::{SeedableRng, thread_rng};
-    use rand_chacha::ChaChaRng;
-    use rayon::prelude::*;
 
-    use crate::{
-        dealer::Dealer,
-        utils::{generate_parties, precompute_lambda},
-    };
+    use crate::{dealer::Dealer, party::generate_parties};
+
+    use common::utils::precompute_lambda;
 
     #[test]
     fn end_to_end() {
         const N: usize = 128;
         const T: usize = 63;
 
-        let mut rng = ChaChaRng::from_rng(thread_rng()).unwrap();
+        let mut rng = rand::rng();
         let mut hasher = blake3::Hasher::new();
         let mut buf = [0u8; 64];
 
-        let G: RistrettoPoint = RistrettoPoint::mul_base(&Scalar::random(&mut rng));
+        let G: RistrettoPoint = RistrettoPoint::mul_base(&common::random::random_scalar(&mut rng));
 
         let lambdas = precompute_lambda(N, T);
 
-        let pk0 = RistrettoPoint::random(&mut rng);
-
-        let mut parties = generate_parties(&G, &mut rng, N, T, &pk0);
+        let mut parties = generate_parties(&G, &mut rng, N, T);
 
         let public_keys: Vec<CompressedRistretto> =
             parties.iter().map(|party| party.public_key.0).collect();
 
-        let mut dealer = Dealer::new(N, T, &public_keys, &pk0).unwrap();
+        let mut dealer = Dealer::new(N, T, &public_keys).unwrap();
+
+        let public_keys: Vec<CompressedRistretto> =
+            parties.iter().map(|party| party.public_key.0).collect();
 
         for party in &mut parties {
             let public_keys: Vec<CompressedRistretto> = public_keys
@@ -49,7 +42,7 @@ mod tests {
             party.ingest_public_keys(&public_keys).unwrap();
         }
 
-        let secret = Scalar::random(&mut rng);
+        let secret = common::random::random_scalar(&mut rng);
         let (encrypted_shares, (d, z)) =
             dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
 
@@ -68,6 +61,7 @@ mod tests {
                 .map(|p| {
                     p.decrypt_share().unwrap();
                     p.dleq_share(&G, &mut rng, &mut hasher, &mut buf).unwrap();
+
                     (
                         p.decrypted_share.unwrap().compress(),
                         p.share_proof.unwrap(),
@@ -85,20 +79,12 @@ mod tests {
             p.ingest_decrypted_shares_and_proofs(&decrypted_shares, share_proofs)
                 .unwrap();
 
-            p.verify_decrypted_shares(&G).unwrap();
+            assert!(p.verify_decrypted_shares(&G).unwrap());
 
-            reconstructed_secrets.push(p.reconstruct_secret_pessimistic(&lambdas).unwrap());
-
-            // Optimistic Case
-            assert!(
-                p.reconstruct_secret_optimistic(&dealer.publish_f0())
-                    .unwrap()
-            );
+            reconstructed_secrets.push(p.reconstruct_secret(&lambdas).unwrap());
         }
-
-        // Pessimistic Case
         reconstructed_secrets
-            .par_iter()
+            .iter()
             .for_each(|secret| assert_eq!(G * dealer.secret.unwrap(), *secret));
     }
 }

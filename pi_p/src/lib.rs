@@ -26,18 +26,19 @@ mod tests {
         let mut hasher = blake3::Hasher::new();
         let mut buf = [0u8; 64];
 
-        let G: RistrettoPoint = RistrettoPoint::mul_base(&Scalar::random(&mut rng));
+        let G: RistrettoPoint = RistrettoPoint::random(&mut rng);
+        let g1: RistrettoPoint = RistrettoPoint::random(&mut rng);
+        let g2: RistrettoPoint = RistrettoPoint::random(&mut rng);
+        let g3: RistrettoPoint = RistrettoPoint::random(&mut rng);
 
         let lambdas = precompute_lambda(N, T);
 
-        let pk0 = RistrettoPoint::random(&mut rng);
-
-        let mut parties = generate_parties(&G, &mut rng, N, T, &pk0);
+        let mut parties = generate_parties(&G, &g1, &g2, &g3, &mut rng, N, T);
 
         let public_keys: Vec<CompressedRistretto> =
             parties.iter().map(|party| party.public_key.0).collect();
 
-        let mut dealer = Dealer::new(N, T, &public_keys, &pk0).unwrap();
+        let mut dealer = Dealer::new(g1, g2, g3, N, T, &public_keys).unwrap();
 
         for party in &mut parties {
             let public_keys: Vec<CompressedRistretto> = public_keys
@@ -50,55 +51,74 @@ mod tests {
         }
 
         let secret = Scalar::random(&mut rng);
-        let (encrypted_shares, (d, z)) =
-            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+        println!("Secret: {:?}", secret);
+
+        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
 
         for p in &mut parties {
-            p.ingest_encrypted_shares(&encrypted_shares).unwrap();
-            p.ingest_dealer_proof(d, z.clone()).unwrap();
+            p.ingest_share((&shares.0[p.index - 1], &shares.1[p.index - 1]));
+            p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
-            let res = p.verify_encrypted_shares(&mut hasher, &mut buf).unwrap();
+            let res = p.verify_share(&mut hasher, &mut buf).unwrap();
 
-            assert!(res, "encrypted share verification failure");
-        }
+            assert!(res, "own share verification failure");
 
-        let (decrypted_shares, share_proofs): (Vec<CompressedRistretto>, Vec<(Scalar, Scalar)>) =
-            parties
-                .iter_mut()
-                .map(|p| {
-                    p.decrypt_share().unwrap();
-                    p.dleq_share(&G, &mut rng, &mut hasher, &mut buf).unwrap();
-                    (
-                        p.decrypted_share.unwrap().compress(),
-                        p.share_proof.unwrap(),
-                    )
-                })
-                .collect();
+            let mut tmp_shares: Vec<(usize, Scalar, Scalar)> = Vec::with_capacity(p.n - 1);
 
-        let mut reconstructed_secrets: Vec<RistrettoPoint> = vec![];
-        for p in &mut parties {
-            let (mut decrypted_shares, mut share_proofs) =
-                (decrypted_shares.clone(), share_proofs.clone());
+            for (i, (f_i, g_i)) in shares.0.iter().zip(shares.1.iter()).enumerate() {
+                if i != (p.index - 1) {
+                    tmp_shares.push((i + 1, *f_i, *g_i));
+                }
+            }
+            p.ingest_shares(tmp_shares).unwrap();
 
-            decrypted_shares.remove(p.index - 1);
-            share_proofs.remove(p.index - 1);
-            p.ingest_decrypted_shares_and_proofs(&decrypted_shares, share_proofs)
-                .unwrap();
-
-            p.verify_decrypted_shares(&G).unwrap();
-
-            reconstructed_secrets.push(p.reconstruct_secret_pessimistic(&lambdas).unwrap());
-
-            // Optimistic Case
             assert!(
-                p.reconstruct_secret_optimistic(&dealer.publish_f0())
-                    .unwrap()
+                p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                "others share verification failure"
             );
+            let sec = p.reconstruct_secret(&lambdas).unwrap();
+            println!("{:?}", sec);
+
+            assert!(secret == sec, "Invalid Reconstructed Secret");
         }
 
-        // Pessimistic Case
-        reconstructed_secrets
-            .par_iter()
-            .for_each(|secret| assert_eq!(G * dealer.secret.unwrap(), *secret));
+        //     let (decrypted_shares, share_proofs): (Vec<CompressedRistretto>, Vec<(Scalar, Scalar)>) =
+        //         parties
+        //             .iter_mut()
+        //             .map(|p| {
+        //                 p.decrypt_share().unwrap();
+        //                 p.dleq_share(&G, &mut rng, &mut hasher, &mut buf).unwrap();
+        //                 (
+        //                     p.decrypted_share.unwrap().compress(),
+        //                     p.share_proof.unwrap(),
+        //                 )
+        //             })
+        //             .collect();
+
+        //     let mut reconstructed_secrets: Vec<RistrettoPoint> = vec![];
+        //     for p in &mut parties {
+        //         let (mut decrypted_shares, mut share_proofs) =
+        //             (decrypted_shares.clone(), share_proofs.clone());
+
+        //         decrypted_shares.remove(p.index - 1);
+        //         share_proofs.remove(p.index - 1);
+        //         p.ingest_decrypted_shares_and_proofs(&decrypted_shares, share_proofs)
+        //             .unwrap();
+
+        //         p.verify_decrypted_shares(&G).unwrap();
+
+        //         reconstructed_secrets.push(p.reconstruct_secret_pessimistic(&lambdas).unwrap());
+
+        //         // Optimistic Case
+        //         assert!(
+        //             p.reconstruct_secret_optimistic(&dealer.publish_f0())
+        //                 .unwrap()
+        //         );
+        //     }
+
+        //     // Pessimistic Case
+        //     reconstructed_secrets
+        //         .par_iter()
+        //         .for_each(|secret| assert_eq!(G * dealer.secret.unwrap(), *secret));
     }
 }

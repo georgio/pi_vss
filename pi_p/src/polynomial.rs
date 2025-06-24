@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 #[derive(Clone)]
 pub struct Polynomial {
-    coefficients: Vec<Scalar>,
+    pub(crate) coefficients: Vec<Scalar>,
 }
 
 impl Polynomial {
@@ -64,6 +64,38 @@ impl Polynomial {
             },
         )
     }
+    pub(crate) fn sample_three_set_f0<R>(
+        degree: usize,
+        f0: &Scalar,
+        rng: &mut R,
+    ) -> (Self, Self, Self)
+    where
+        R: CryptoRngCore + ?Sized,
+    {
+        let (mut coefs_1, coefs_2, coefs_3): (Vec<Scalar>, Vec<Scalar>, Vec<Scalar>) = (0..=degree)
+            .map(|_| {
+                (
+                    Scalar::random(rng),
+                    Scalar::random(rng),
+                    Scalar::random(rng),
+                )
+            })
+            .collect();
+
+        coefs_1[0] = *f0;
+
+        (
+            Polynomial {
+                coefficients: coefs_1,
+            },
+            Polynomial {
+                coefficients: coefs_2,
+            },
+            Polynomial {
+                coefficients: coefs_3,
+            },
+        )
+    }
     pub(crate) fn evaluate(&self, x: usize) -> Scalar {
         let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(x as u64)];
 
@@ -76,6 +108,35 @@ impl Polynomial {
             .zip(x_powers)
             .map(|(coef, x_pow)| coef * x_pow)
             .sum()
+    }
+
+    pub(crate) fn evaluate_two_range(
+        &self,
+        other: &Self,
+        from: usize,
+        to: usize,
+    ) -> (Vec<Scalar>, Vec<Scalar>) {
+        (from..=to)
+            .into_par_iter()
+            .map(|i| {
+                let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(i as u64)];
+
+                for i in 2..self.coefficients.len() {
+                    x_powers.push(x_powers[1] * x_powers[i - 1]);
+                }
+
+                self.coefficients
+                    .iter()
+                    .zip(other.coefficients.iter())
+                    .zip(x_powers)
+                    .fold(
+                        (Scalar::ZERO, Scalar::ZERO),
+                        |(acc_f, acc_r), ((coef_f, coef_r), x_pow)| {
+                            ((acc_f + (coef_f * x_pow)), (acc_r + (coef_r * x_pow)))
+                        },
+                    )
+            })
+            .unzip()
     }
 
     pub(crate) fn evaluate_multiply(&self, points: &Vec<RistrettoPoint>) -> Vec<RistrettoPoint> {
@@ -176,6 +237,8 @@ impl Polynomial {
             .par_iter_mut()
             .for_each(|coef| *coef = f(*coef, *x));
     }
+
+    // self_i += self_i * mul_val + p2_i
     pub(crate) fn mul_sum(&mut self, mul_val: &Scalar, p2: &Self) {
         self.coefficients
             .par_iter_mut()
@@ -186,6 +249,7 @@ impl Polynomial {
             });
     }
 }
+
 impl std::fmt::Display for Polynomial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

@@ -1,30 +1,28 @@
-use curve25519_dalek::{ristretto::CompressedRistretto, scalar::Scalar, RistrettoPoint};
-use pi_s::{
-    dealer::Dealer,
-    utils::{generate_parties, precompute_lambda},
-};
-use rand::{thread_rng, SeedableRng};
-use rand_chacha::ChaChaRng;
+use common::{random::random_scalar, utils::precompute_lambda};
+use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
+use pi_s::{dealer::Dealer, party::generate_parties};
 
 fn main() {
-    const N: usize = 33;
-    const T: usize = 16;
+    const N: usize = 2048;
+    const T: usize = 1023;
 
-    let mut rng = ChaChaRng::from_rng(thread_rng()).unwrap();
+    let mut rng = rand::rng();
     let mut hasher = blake3::Hasher::new();
     let mut buf = [0u8; 64];
 
-    let G: RistrettoPoint = RistrettoPoint::mul_base(&Scalar::random(&mut rng));
+    let G: RistrettoPoint = RistrettoPoint::mul_base(&random_scalar(&mut rng));
+
     let lambdas = precompute_lambda(N, T);
 
-    let pk0 = RistrettoPoint::random(&mut rng);
-
-    let mut parties = generate_parties(&G, &mut rng, N, T, &pk0);
+    let mut parties = generate_parties(&G, &mut rng, N, T);
 
     let public_keys: Vec<CompressedRistretto> =
         parties.iter().map(|party| party.public_key.0).collect();
 
-    let mut dealer = Dealer::new(N, T, &public_keys, &pk0).unwrap();
+    let mut dealer = Dealer::new(N, T, &public_keys).unwrap();
+
+    let public_keys: Vec<CompressedRistretto> =
+        parties.iter().map(|party| party.public_key.0).collect();
 
     for party in &mut parties {
         let public_keys: Vec<CompressedRistretto> = public_keys
@@ -35,9 +33,7 @@ fn main() {
 
         party.ingest_public_keys(&public_keys).unwrap();
     }
-
-    let secret = Scalar::random(&mut rng);
-
+    let secret = random_scalar(&mut rng);
     let (encrypted_shares, (d, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
 
     for p in &mut parties {
@@ -55,6 +51,7 @@ fn main() {
             .map(|p| {
                 p.decrypt_share().unwrap();
                 p.dleq_share(&G, &mut rng, &mut hasher, &mut buf).unwrap();
+
                 (
                     p.decrypted_share.unwrap().compress(),
                     p.share_proof.unwrap(),
@@ -74,6 +71,6 @@ fn main() {
 
         p.verify_decrypted_shares(&G).unwrap();
 
-        reconstructed_secrets.push(p.reconstruct_secret_pessimistic(&lambdas).unwrap());
+        reconstructed_secrets.push(p.reconstruct_secret(&lambdas).unwrap());
     }
 }

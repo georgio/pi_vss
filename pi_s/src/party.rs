@@ -1,19 +1,19 @@
 use blake3::Hasher;
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
-use rand_chacha::rand_core::CryptoRngCore;
+use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
+
+use rand::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
-use crate::{
+use common::{
     error::{
         Error,
         ErrorKind::{CountMismatch, InvalidPararmeterSet, InvalidProof, UninitializedValue},
     },
     polynomial::Polynomial,
-    utils::{batch_decompress_ristretto_points, verify_encrypted_shares_standalone},
+    utils::batch_decompress_ristretto_points,
 };
 use rayon::prelude::*;
 
-#[derive(Clone)]
 pub struct Party {
     pub private_key: Scalar,
     pub public_key: (CompressedRistretto, RistrettoPoint),
@@ -24,6 +24,7 @@ pub struct Party {
     pub encrypted_share: Option<RistrettoPoint>,
     pub decrypted_share: Option<RistrettoPoint>,
 
+    // external: Vec<ExternalParty>,
     pub dealer_proof: Option<(Scalar, Polynomial)>,
 
     pub public_keys: Option<Vec<RistrettoPoint>>,
@@ -31,7 +32,6 @@ pub struct Party {
     pub decrypted_shares: Option<Vec<RistrettoPoint>>,
     pub share_proofs: Option<Vec<(Scalar, Scalar)>>,
     pub validated_shares: Vec<usize>,
-    pub pk0: RistrettoPoint,
 }
 
 impl Party {
@@ -41,13 +41,12 @@ impl Party {
         n: usize,
         t: usize,
         index: usize,
-        pk0: RistrettoPoint,
     ) -> Result<Self, Error>
     where
-        R: CryptoRngCore + ?Sized,
+        R: CryptoRng + RngCore,
     {
-        let private_key = Scalar::random(rng);
-        let public_key = G * &private_key;
+        let private_key = common::random::random_scalar(rng);
+        let public_key = G * private_key;
 
         if index <= n && t < n && t as f32 == ((n - 1) as f32 / 2.0).floor() {
             Ok(Self {
@@ -65,7 +64,6 @@ impl Party {
                 decrypted_shares: None,
                 public_keys: None,
                 validated_shares: vec![],
-                pk0,
             })
         } else {
             Err(InvalidPararmeterSet(n, t as isize, index).into())
@@ -76,10 +74,10 @@ impl Party {
         &mut self,
         encrypted_shares: &[CompressedRistretto],
     ) -> Result<(), Error> {
-        if encrypted_shares.len() == self.n + 1 {
+        if encrypted_shares.len() == self.n {
             match batch_decompress_ristretto_points(encrypted_shares) {
                 Ok(enc_shares) => {
-                    self.encrypted_share = Some(enc_shares[self.index]);
+                    self.encrypted_share = Some(enc_shares[self.index - 1]);
                     self.encrypted_shares = Some((encrypted_shares.to_vec(), enc_shares));
                     Ok(())
                 }
@@ -123,7 +121,6 @@ impl Party {
             Ok(())
         }
     }
-
     pub fn ingest_decrypted_shares_and_proofs(
         &mut self,
         decrypted_shares: &[CompressedRistretto],
@@ -171,15 +168,29 @@ impl Party {
         match &self.dealer_proof {
             Some((d, z)) => match (&self.encrypted_shares, &self.public_keys) {
                 (Some(encrypted_shares), Some(public_keys)) => {
-                    let mut new_pub_keys = public_keys.clone();
-                    new_pub_keys.insert(0, self.pk0);
-                    verify_encrypted_shares_standalone(
-                        encrypted_shares,
-                        &new_pub_keys,
-                        (d, z),
-                        hasher,
-                        buf,
-                    )
+                    let shares: Vec<CompressedRistretto> = z
+                        .evaluate_multiply(public_keys, 1)
+                        .1
+                        .par_iter()
+                        .zip(encrypted_shares.1.par_iter())
+                        .map(|(x, enc_share)| (x - (enc_share * d)).compress())
+                        .collect();
+
+                    let flat_vec: Vec<u8> = encrypted_shares
+                        .0
+                        .iter()
+                        .chain(shares.iter())
+                        .flat_map(|x| x.to_bytes())
+                        .collect();
+
+                    hasher.update(&flat_vec);
+
+                    hasher.finalize_xof().fill(buf);
+                    let reconstructed_d = Scalar::from_bytes_mod_order_wide(buf);
+
+                    hasher.reset();
+                    buf.zeroize();
+                    Ok(*d == reconstructed_d)
                 }
                 (Some(_), None) => Err(UninitializedValue("party.public_keys").into()),
                 (None, Some(_)) => Err(UninitializedValue("party.encrypted_shares").into()),
@@ -190,7 +201,6 @@ impl Party {
             None => Err(UninitializedValue("party.dealer_proof").into()),
         }
     }
-
     pub fn decrypt_share(&mut self) -> Result<(), Error> {
         let inv_private_key = self.private_key.invert();
         match &self.encrypted_share {
@@ -209,12 +219,11 @@ impl Party {
         buf: &mut [u8; 64],
     ) -> Result<(), Error>
     where
-        R: CryptoRngCore + ?Sized,
+        R: CryptoRng + RngCore,
     {
         match (&self.decrypted_share, &self.encrypted_share) {
             (Some(decrypted_share), Some(encrypted_share)) => {
-                let r = Scalar::random(rng);
-
+                let r = common::random::random_scalar(rng);
                 let c1 = (G * &r).compress();
                 let c2 = (decrypted_share * r).compress();
 
@@ -229,10 +238,10 @@ impl Party {
                 let z = r + d * self.private_key;
 
                 self.share_proof = Some((d, z));
-                
+
                 hasher.reset();
                 buf.zeroize();
-                
+
                 Ok(())
             }
             (None, Some(_)) => Err(UninitializedValue("party.decrypted_share").into()),
@@ -253,13 +262,13 @@ impl Party {
                             .zip(
                                 proofs
                                     .par_iter()
-                                    .zip(public_keys.par_iter().zip(enc_shares.1.par_iter().skip(1))),
+                                    .zip(public_keys.par_iter().zip(enc_shares.1.par_iter())),
                             )
                             .enumerate()
                             .map_init(
                                 ||(blake3::Hasher::new(), [0u8;64]), | (hasher, buf),
                                 (i, (dec_share, ((d, z), (public_key, enc_share)))) | {
-                                    let num1 = G * z;
+                                    let num1 =  G * z;
                                     let num2 = dec_share * z;
 
                                     let denom1 = public_key * d;
@@ -275,7 +284,7 @@ impl Party {
 
                                     hasher.reset();
                                     buf.zeroize();
-                                    
+
                                     if *d == reconstructed_d {
                                         Some(i)
                                     } else {
@@ -297,10 +306,7 @@ impl Party {
             (None, None) => Err(UninitializedValue("party.{public_keys, encrypted_shares}").into()),
         }
     }
-    pub fn reconstruct_secret_pessimistic(
-        &self,
-        lambdas: &Vec<Scalar>,
-    ) -> Result<RistrettoPoint, Error> {
+    pub fn reconstruct_secret(&self, lambdas: &Vec<Scalar>) -> Result<RistrettoPoint, Error> {
         match &self.decrypted_shares {
             Some(dec_shares) => Ok(self
                 .validated_shares
@@ -311,9 +317,13 @@ impl Party {
             None => Err(UninitializedValue("party.decrypted_shares").into()),
         }
     }
-    pub fn reconstruct_secret_optimistic(&self, f0: &Scalar) -> Result<bool, Error> {
-        let point = self.encrypted_shares.as_ref().unwrap().1[0];
-        Ok(point.compress().decompress().unwrap()
-            == (self.pk0 * f0).compress().decompress().unwrap())
-    }
+}
+
+pub fn generate_parties<R>(G: &RistrettoPoint, rng: &mut R, n: usize, t: usize) -> Vec<Party>
+where
+    R: CryptoRng + RngCore,
+{
+    (1..=n)
+        .map(|i| Party::new(G, rng, n, t, i).unwrap())
+        .collect()
 }

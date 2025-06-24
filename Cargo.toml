@@ -1,19 +1,20 @@
 [workspace]
-members = ["pi_s", "pi_p"]
+members = ["pi_s",  "common"]
 resolver = "2"
 
 [workspace.package]
 authors = ["Georgio Nicolas <me@georgio.xyz>"]
 edition = "2024"
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 curve25519-dalek = {version = "4.1.3", features = ["rand_core"] }
 error-chain = "0.12.4"
-rand = "0.8.5"
-rand_chacha = "0.3.1"
+rand = "0.9.1"
 rayon = "1.10.0"
 zeroize = "1.8.1"
+criterion = "0.6.0"
 
 [profile.release]
 lto = "fat"

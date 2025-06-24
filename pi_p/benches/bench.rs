@@ -1,12 +1,12 @@
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use curve25519_dalek::{ristretto::CompressedRistretto, scalar::Scalar, RistrettoPoint};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
 use pi_p::{
     dealer::Dealer,
     error::ErrorKind::PointDecompressionError,
     utils::{generate_parties, precompute_lambda},
 };
 
-use rand::{thread_rng, SeedableRng};
+use rand::{SeedableRng, thread_rng};
 use rand_chacha::ChaChaRng;
 
 fn pvss(c: &mut Criterion) {
@@ -80,9 +80,11 @@ fn pvss(c: &mut Criterion) {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
                     |(mut hasher, mut buf)| {
-                        assert!(parties[0]
-                            .verify_encrypted_shares(&mut hasher, &mut buf)
-                            .unwrap())
+                        assert!(
+                            parties[0]
+                                .verify_encrypted_shares(&mut hasher, &mut buf)
+                                .unwrap()
+                        )
                     },
                     BatchSize::PerIteration,
                 )

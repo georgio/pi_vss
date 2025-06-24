@@ -1,5 +1,5 @@
 [package]
-name = "pi_p"
+name = "common"
 version = {workspace = true}
 authors = {workspace = true}
 edition = {workspace = true}
@@ -9,11 +9,9 @@ license = {workspace = true}
 curve25519-dalek = {workspace = true}
 error-chain = {workspace = true}
 rand = {workspace = true}
-rand_chacha = {workspace = true}
 rayon = {workspace = true}
 zeroize = {workspace = true}
-
-common = {path ="../common"}
+num-bigint = "0.4.6"
 
 [target.'cfg(all(target_arch = "aarch64"))'.dependencies]
 blake3 = {version = "1.8.2", features = ["neon", "rayon", "zeroize", "traits-preview"]}
@@ -23,6 +21,6 @@ blake3 = {version = "1.8.2", features = ["rayon", "zeroize", "traits-preview"]}
 [dev-dependencies]
 criterion = {workspace = true}
 
-[[bench]]
-name = "bench"
-harness = false
+# [[bench]]
+# name = "bench"
+# harness = false
