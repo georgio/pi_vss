@@ -9,7 +9,6 @@ license = {workspace = true}
 curve25519-dalek = {workspace = true}
 error-chain = {workspace = true}
 rand = {workspace = true}
-rand_chacha = {workspace = true}
 rayon = {workspace = true}
 zeroize = {workspace = true}
 

@@ -1,23 +1,20 @@
+use common::utils::precompute_lambda;
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
-use pi_p::{
-    dealer::Dealer,
-    utils::{generate_parties, precompute_lambda},
-};
+use pi_p::dealer::Dealer;
 use rand::{SeedableRng, thread_rng};
-use rand_chacha::ChaChaRng;
 
 fn main() {
     // const N: usize = 33;
     // const T: usize = 16;
 
-    // let mut rng = ChaChaRng::from_rng(thread_rng()).unwrap();
+    // let mut rng = rand::rng();
     // let mut hasher = blake3::Hasher::new();
     // let mut buf = [0u8; 64];
 
     // let G: RistrettoPoint = RistrettoPoint::mul_base(&Scalar::random(&mut rng));
     // let lambdas = precompute_lambda(N, T);
 
-    // let pk0 = RistrettoPoint::random(&mut rng);
+    // let pk0 = random_point(&mut rng);
 
     // let mut parties = generate_parties(&G, &mut rng, N, T, &pk0);
 

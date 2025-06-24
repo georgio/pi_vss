@@ -1,20 +1,19 @@
 pub mod dealer;
-pub mod error;
 pub mod party;
-pub mod polynomial;
 pub mod utils;
 
 #[cfg(test)]
 
 mod tests {
     use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-    use rand::{SeedableRng, thread_rng};
-    use rand_chacha::ChaChaRng;
+
     use rayon::prelude::*;
 
-    use crate::{
-        dealer::Dealer,
-        utils::{generate_parties, precompute_lambda},
+    use crate::{dealer::Dealer, party::generate_parties};
+
+    use common::{
+        random::{random_point, random_scalar},
+        utils::precompute_lambda,
     };
 
     #[test]
@@ -22,14 +21,14 @@ mod tests {
         const N: usize = 128;
         const T: usize = 63;
 
-        let mut rng = ChaChaRng::from_rng(thread_rng()).unwrap();
+        let mut rng = rand::rng();
         let mut hasher = blake3::Hasher::new();
         let mut buf = [0u8; 64];
 
-        let G: RistrettoPoint = RistrettoPoint::random(&mut rng);
-        let g1: RistrettoPoint = RistrettoPoint::random(&mut rng);
-        let g2: RistrettoPoint = RistrettoPoint::random(&mut rng);
-        let g3: RistrettoPoint = RistrettoPoint::random(&mut rng);
+        let G: RistrettoPoint = random_point(&mut rng);
+        let g1: RistrettoPoint = random_point(&mut rng);
+        let g2: RistrettoPoint = random_point(&mut rng);
+        let g3: RistrettoPoint = random_point(&mut rng);
 
         let lambdas = precompute_lambda(N, T);
 
@@ -50,7 +49,7 @@ mod tests {
             party.ingest_public_keys(&public_keys).unwrap();
         }
 
-        let secret = Scalar::random(&mut rng);
+        let secret = random_scalar(&mut rng);
         println!("Secret: {:?}", secret);
 
         let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);

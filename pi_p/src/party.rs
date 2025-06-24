@@ -1,9 +1,9 @@
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-use rand_chacha::rand_core::CryptoRngCore;
+use rand::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
-use crate::{
+use common::{
     error::{
         Error,
         ErrorKind::{
@@ -12,7 +12,8 @@ use crate::{
         },
     },
     polynomial::Polynomial,
-    utils::{batch_decompress_ristretto_points, verify_encrypted_shares_standalone},
+    random::random_scalar,
+    utils::batch_decompress_ristretto_points,
 };
 use rayon::prelude::*;
 
@@ -47,9 +48,9 @@ impl Party {
         index: usize,
     ) -> Result<Self, Error>
     where
-        R: CryptoRngCore + ?Sized,
+        R: CryptoRng + RngCore,
     {
-        let private_key = Scalar::random(rng);
+        let private_key = random_scalar(rng);
         let public_key = G * &private_key;
 
         if index <= n && t < n && t as f32 == ((n - 1) as f32 / 2.0).floor() {
@@ -201,4 +202,21 @@ impl Party {
             None => Err(UninitializedValue("party.decrypted_shares").into()),
         }
     }
+}
+
+pub fn generate_parties<R>(
+    G: &RistrettoPoint,
+    g1: &RistrettoPoint,
+    g2: &RistrettoPoint,
+    g3: &RistrettoPoint,
+    rng: &mut R,
+    n: usize,
+    t: usize,
+) -> Vec<Party>
+where
+    R: CryptoRng + RngCore,
+{
+    (1..=n)
+        .map(|i| Party::new(G, g1.clone(), g2.clone(), g3.clone(), rng, n, t, i).unwrap())
+        .collect()
 }

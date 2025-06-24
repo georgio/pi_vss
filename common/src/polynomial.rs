@@ -93,6 +93,35 @@ impl Polynomial {
             .sum()
     }
 
+    pub fn evaluate_two_range(
+        &self,
+        other: &Self,
+        from: usize,
+        to: usize,
+    ) -> (Vec<Scalar>, Vec<Scalar>) {
+        (from..=to)
+            .into_par_iter()
+            .map(|i| {
+                let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(i as u64)];
+
+                for i in 2..self.coefficients.len() {
+                    x_powers.push(x_powers[1] * x_powers[i - 1]);
+                }
+
+                self.coefficients
+                    .iter()
+                    .zip(other.coefficients.iter())
+                    .zip(x_powers)
+                    .fold(
+                        (Scalar::ZERO, Scalar::ZERO),
+                        |(acc_f, acc_r), ((coef_f, coef_r), x_pow)| {
+                            ((acc_f + (coef_f * x_pow)), (acc_r + (coef_r * x_pow)))
+                        },
+                    )
+            })
+            .unzip()
+    }
+
     pub fn evaluate_multiply(
         &self,
         points: &Vec<RistrettoPoint>,

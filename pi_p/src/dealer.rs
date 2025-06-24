@@ -1,14 +1,15 @@
-use crate::{
+use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
+    random::random_scalar,
     utils::batch_decompress_ristretto_points,
 };
+use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-use rand_chacha::rand_core::CryptoRngCore;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
+
 use zeroize::Zeroize;
 
 pub struct Dealer {
@@ -60,14 +61,14 @@ impl Dealer {
         (Vec<CompressedRistretto>, Polynomial),
     )
     where
-        R: CryptoRngCore + ?Sized,
+        R: CryptoRng + RngCore,
     {
         let (f, r) = Polynomial::sample_two_set_f0(self.t, secret, rng);
         self.secret = Some(*secret);
 
         // Step 3
         let mut g: Vec<Scalar> = vec![Scalar::ZERO; self.public_keys.len()];
-        g.iter_mut().for_each(|g_val| *g_val = Scalar::random(rng));
+        g.iter_mut().for_each(|g_val| *g_val = random_scalar(rng));
 
         let (f_evals, r_evals) = f.evaluate_two_range(&r, 1, self.public_keys.len());
 

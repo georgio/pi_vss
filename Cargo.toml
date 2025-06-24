@@ -1,5 +1,5 @@
 [workspace]
-members = ["pi_s",  "common"]
+members =  ["common", "pi_p", "pi_s"]
 resolver = "2"
 
 [workspace.package]
