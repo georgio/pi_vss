@@ -1,0 +1,38 @@
+(n: 64, t: 31) | Pi_S PPVSS | Dealer: Deal Secret
+                        time:   [592.69 µs 594.16 µs 595.68 µs]
+(n: 64, t: 31) | Pi_S PPVSS | Party: Verify Encrypted Shares
+                        time:   [509.78 µs 510.99 µs 512.56 µs]
+
+(n: 128, t: 63) | Pi_S PPVSS | Dealer: Deal Secret
+                        time:   [1.1273 ms 1.1296 ms 1.1319 ms]
+(n: 128, t: 63) | Pi_S PPVSS | Party: Verify Encrypted Shares
+                        time:   [941.76 µs 943.09 µs 944.47 µs]
+
+(n: 256, t: 127) | Pi_S PPVSS | Dealer: Deal Secret
+                        time:   [2.4631 ms 2.4702 ms 2.4774 ms]
+(n: 256, t: 127) | Pi_S PPVSS | Party: Verify Encrypted Shares
+                        time:   [2.0687 ms 2.1022 ms 2.1531 ms]
+
+(n: 512, t: 255) | Pi_S PPVSS | Dealer: Deal Secret
+                        time:   [6.1935 ms 6.2158 ms 6.2386 ms]
+(n: 512, t: 255) | Pi_S PPVSS | Party: Verify Encrypted Shares
+                        time:   [4.9537 ms 4.9766 ms 5.0070 ms]
+
+(n: 1024, t: 511) | Pi_S PPVSS | Dealer: Deal Secret
+                        time:   [17.906 ms 17.962 ms 18.021 ms]
+(n: 1024, t: 511) | Pi_S PPVSS | Party: Verify Encrypted Shares
+                        time:   [13.644 ms 13.680 ms 13.719 ms]
+
+(n: 2048, t: 1023) | Pi_S PPVSS | Dealer: Deal Secret
+                        time:   [58.958 ms 59.164 ms 59.391 ms]
+(n: 2048, t: 1023) | Pi_S PPVSS | Party: Verify Encrypted Shares
+                        time:   [42.912 ms 42.979 ms 43.051 ms]
+
+Basepoint Multiplication
+                        time:   [5.6564 µs 5.6617 µs 5.6713 µs]
+Random Point Multiplication
+                        time:   [17.972 µs 17.990 µs 18.016 µs]
+Point Compression       time:   [2.2817 µs 2.2843 µs 2.2866 µs]
+Point Decompression     time:   [2.2983 µs 2.3021 µs 2.3054 µs]
+Point Decompression Handled
+                        time:   [2.2933 µs 2.2987 µs 2.3031 µs]
