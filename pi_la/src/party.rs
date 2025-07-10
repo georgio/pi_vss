@@ -109,12 +109,13 @@ impl Party {
                 Some(fi) => {
                     let flat_vec: Vec<u8> = c_vals.clone().into_iter().flatten().collect();
 
-                    hasher.update(&flat_vec);
+                    hasher.update(flat_vec.as_slice());
+
                     hasher.finalize_xof().fill(buf);
 
                     let d = Scalar::from_bytes_mod_order_wide(buf);
-                    buf.zeroize();
                     hasher.reset();
+                    buf.zeroize();
 
                     hasher.update(fi.as_bytes());
                     hasher.update((z.evaluate(self.index) - d * fi).as_bytes());

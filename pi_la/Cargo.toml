@@ -1,5 +1,5 @@
 [package]
-name = "pi_p"
+name = "pi_la"
 version = {workspace = true}
 authors = {workspace = true}
 edition = {workspace = true}

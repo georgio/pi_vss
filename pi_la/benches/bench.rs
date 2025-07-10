@@ -1,6 +1,6 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
-use pi_p::{dealer::Dealer, party::generate_parties};
+use pi_la::{dealer::Dealer, party::generate_parties};
 
 use common::{
     random::{random_point, random_scalar},
@@ -44,7 +44,7 @@ fn pvss(c: &mut Criterion) {
         let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
 
         c.bench_function(
-            &format!("(n: {}, t: {}) | Pi_P PVSS | Dealer: Deal Secret", n, t),
+            &format!("(n: {}, t: {}) | Pi_LA PVSS | Dealer: Deal Secret", n, t),
             |b| {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
@@ -67,7 +67,7 @@ fn pvss(c: &mut Criterion) {
         }
 
         c.bench_function(
-            &format!("(n: {}, t: {}) | Pi_P PVSS | Party: Verify Shares", n, t),
+            &format!("(n: {}, t: {}) | Pi_LA PVSS | Party: Verify Shares", n, t),
             |b| {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
@@ -110,7 +110,7 @@ fn pvss(c: &mut Criterion) {
 
         c.bench_function(
             &format!(
-                "(n: {}, t: {}) | Pi_P PVSS | Party: Reconstruct Secret",
+                "(n: {}, t: {}) | Pi_LA PVSS | Party: Reconstruct Secret",
                 n, t
             ),
             |b| {

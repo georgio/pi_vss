@@ -3,7 +3,7 @@ use common::{
     utils::compute_lagrange_bases,
 };
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
-use pi_p::{dealer::Dealer, party::generate_parties};
+use pi_la::{dealer::Dealer, party::generate_parties};
 
 fn main() {
     const N: usize = 128;
