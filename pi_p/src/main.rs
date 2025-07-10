@@ -40,8 +40,15 @@ fn main() {
     let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
 
     for p in &mut parties {
-        p.ingest_shares(&shares).unwrap();
         p.ingest_dealer_proof((&c_vals, &z)).unwrap();
+
+        p.ingest_share((&shares.0[p.index - 1], &shares.1[p.index - 1]));
+        assert!(
+            p.verify_share(&mut hasher, &mut buf).unwrap(),
+            "share verification failure"
+        );
+
+        p.ingest_shares(&shares).unwrap();
 
         assert!(
             p.verify_shares(&mut hasher, &mut buf).unwrap(),
