@@ -1,6 +1,10 @@
-use common::{random::random_scalar, utils::precompute_lambda};
+use common::{
+    random::random_scalar,
+    utils::{compute_lagrange_bases, precompute_lambda},
+};
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
 use pi_s::{dealer::Dealer, party::generate_parties};
+use rand::seq::SliceRandom;
 
 fn main() {
     const N: usize = 2048;
@@ -69,8 +73,20 @@ fn main() {
         p.ingest_decrypted_shares_and_proofs(&decrypted_shares, share_proofs)
             .unwrap();
 
-        p.verify_decrypted_shares(&G).unwrap();
+        assert!(p.verify_decrypted_shares(&G).unwrap());
 
-        reconstructed_secrets.push(p.reconstruct_secret(&lambdas).unwrap());
+        p.select_qualified_set(&mut rng).unwrap();
+
+        let indices: Vec<usize> = p
+            .qualified_set
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(index, _)| *index)
+            .collect();
+
+        let lagrange_bases = compute_lagrange_bases(&indices);
+
+        reconstructed_secrets.push(p.reconstruct_secret(&lagrange_bases).unwrap());
     }
 }

@@ -1,11 +1,10 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
+use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
 use pi_p::{dealer::Dealer, party::generate_parties};
 
 use common::{
-    error::ErrorKind::PointDecompressionError,
     random::{random_point, random_scalar},
-    utils::precompute_lambda,
+    utils::compute_lagrange_bases,
 };
 
 fn pvss(c: &mut Criterion) {
@@ -26,10 +25,6 @@ fn pvss(c: &mut Criterion) {
         let g2: RistrettoPoint = random_point(&mut rng);
         let g3: RistrettoPoint = random_point(&mut rng);
 
-        let lambdas = precompute_lambda(n, t);
-
-        let pk0 = random_point(&mut rng);
-
         let mut parties = generate_parties(&G, &g1, &g2, &g3, &mut rng, n, t);
 
         let public_keys: Vec<CompressedRistretto> =
@@ -48,11 +43,11 @@ fn pvss(c: &mut Criterion) {
         }
 
         let secret = random_scalar(&mut rng);
-        let (encrypted_shares, (d, z)) =
-            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+
+        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
 
         c.bench_function(
-            &format!("(n: {}, t: {}) | Pi_S PPVSS | Dealer: Deal Secret", n, t),
+            &format!("(n: {}, t: {}) | Pi_P PVSS | Dealer: Deal Secret", n, t),
             |b| {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
@@ -65,137 +60,70 @@ fn pvss(c: &mut Criterion) {
         );
 
         for p in &mut parties {
-            p.ingest_shares(&encrypted_shares).unwrap();
-            p.ingest_dealer_proof(d, z.clone()).unwrap();
+            p.ingest_shares(&shares).unwrap();
+            p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
-            // let res = p.verify_encrypted_shares(&mut hasher, &mut buf).unwrap();
-
-            // assert!(res, "encrypted share verification failure");
+            assert!(
+                p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                "share verification failure"
+            );
         }
 
         c.bench_function(
-            &format!(
-                "(n: {}, t: {}) | Pi_S PPVSS | Party: Verify Encrypted Shares",
-                n, t
-            ),
+            &format!("(n: {}, t: {}) | Pi_P PVSS | Party: Verify Shares", n, t),
             |b| {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
                     |(mut hasher, mut buf)| {
-                        assert!(
-                            parties[0]
-                                .verify_encrypted_shares(&mut hasher, &mut buf)
-                                .unwrap()
-                        )
+                        assert!(parties[0].verify_shares(&mut hasher, &mut buf).unwrap())
                     },
                     BatchSize::PerIteration,
                 )
             },
         );
 
-        //     let (decrypted_shares, share_proofs): (Vec<CompressedRistretto>, Vec<(Scalar, Scalar)>) =
-        //         parties
-        //             .iter_mut()
-        //             .map(|p| {
-        //                 p.decrypt_share().unwrap();
-        //                 p.dleq_share(&G, &mut rng, &mut hasher, &mut buf).unwrap();
-        //                 (
-        //                     p.decrypted_share.unwrap().compress(),
-        //                     p.share_proof.unwrap(),
-        //                 )
-        //             })
-        //             .collect();
+        for p in &mut parties {
+            p.select_qualified_set(&mut rng).unwrap();
 
-        //     c.bench_function(
-        //         &format!("(n: {}, t: {}) | Pi_S PPVSS | Party: Decrypt Share", n, t),
-        //         |b| b.iter(|| parties[0].decrypt_share().unwrap()),
-        //     );
+            let indices: Vec<usize> = p
+                .qualified_set
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(index, _)| *index)
+                .collect();
 
-        //     c.bench_function(
-        //         &format!("(n: {}, t: {}) | Pi_S PPVSS |  Party: Generate Proof", n, t),
-        //         |b| {
-        //             b.iter_batched(
-        //                 || (blake3::Hasher::new(), [0u8; 64]),
-        //                 |(mut hasher, mut buf)| {
-        //                     parties[0]
-        //                         .dleq_share(&G, &mut rng, &mut hasher, &mut buf)
-        //                         .unwrap()
-        //                 },
-        //                 BatchSize::PerIteration,
-        //             )
-        //         },
-        //     );
+            let lagrange_bases = compute_lagrange_bases(&indices);
 
-        //     for p in &mut parties {
-        //         let (mut decrypted_shares, mut share_proofs) =
-        //             (decrypted_shares.clone(), share_proofs.clone());
+            let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
+            assert!(sec == secret);
+        }
 
-        //         decrypted_shares.remove(p.index - 1);
-        //         share_proofs.remove(p.index - 1);
-        //         p.ingest_decrypted_shares_and_proofs(&decrypted_shares, share_proofs)
-        //             .unwrap();
-        //     }
+        parties[0].select_qualified_set(&mut rng).unwrap();
 
-        //     c.bench_function(
-        //         &format!("(n: {}, t: {}) | Pi_S PPVSS | Party: Verify Decrypted Shares", n, t),
-        //         |b| {
-        //             b.iter(|| {
-        //                 parties[0].verify_decrypted_shares(&G).unwrap();
-        //             })
-        //         },
-        //     );
+        let indices: Vec<usize> = parties[0]
+            .qualified_set
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(index, _)| *index)
+            .collect();
 
-        //     c.bench_function(
-        //         &format!(
-        //             "(n: {}, t: {}) | Pi_S PPVSS | Party: Reconstruct Secret - Pessimistic",
-        //             n, t
-        //         ),
-        //         |b| {
-        //             b.iter(|| {
-        //                 parties[0].reconstruct_secret_pessimistic(&lambdas).unwrap();
-        //             })
-        //         },
-        //     );
-        //     c.bench_function(
-        //         &format!(
-        //             "(n: {}, t: {}) | Pi_S PPVSS | Party: Reconstruct Secret - Optimistic",
-        //             n, t
-        //         ),
-        //         |b| {
-        //             b.iter(|| {
-        //                 parties[0]
-        //                     .reconstruct_secret_optimistic(&dealer.publish_f0())
-        //                     .unwrap();
-        //             })
-        //         },
-        //     );
+        let lagrange_bases = compute_lagrange_bases(&indices);
+
+        c.bench_function(
+            &format!(
+                "(n: {}, t: {}) | Pi_P PVSS | Party: Reconstruct Secret",
+                n, t
+            ),
+            |b| {
+                b.iter(|| {
+                    parties[0].reconstruct_secret(&lagrange_bases).unwrap();
+                })
+            },
+        );
     }
 }
 
-fn ristretto_point_bench(c: &mut Criterion) {
-    let mut rng = rand::rng();
-    let x = random_scalar(&mut rng);
-    let G: RistrettoPoint = RistrettoPoint::mul_base(&random_scalar(&mut rng));
-
-    let gx = G * x;
-    let gx_compressed = gx.compress();
-
-    c.bench_function("Basepoint Multiplication", |b| {
-        b.iter(|| RistrettoPoint::mul_base(&x))
-    });
-
-    c.bench_function("Random Point Multiplication", |b| b.iter(|| G * x));
-    c.bench_function("Point Compression", |b| b.iter(|| gx.compress()));
-    c.bench_function("Point Decompression", |b| {
-        b.iter(|| gx_compressed.decompress().unwrap())
-    });
-    c.bench_function("Point Decompression Handled", |b| {
-        b.iter(|| match gx_compressed.decompress() {
-            Some(point) => Ok(point),
-            None => Err(PointDecompressionError),
-        })
-    });
-}
-
-criterion_group!(benches, pvss, ristretto_point_bench,);
+criterion_group!(benches, pvss);
 criterion_main!(benches);

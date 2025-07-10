@@ -1,13 +1,16 @@
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, Rng, RngCore, seq::SliceRandom};
 use zeroize::Zeroize;
 
 use common::{
     error::{
         Error,
-        ErrorKind::{CountMismatch, InvalidPararmeterSet, InvalidProof, UninitializedValue},
+        ErrorKind::{
+            CountMismatch, InsufficientShares, InvalidPararmeterSet, InvalidProof,
+            UninitializedValue,
+        },
     },
     polynomial::Polynomial,
     utils::batch_decompress_ristretto_points,
@@ -32,6 +35,7 @@ pub struct Party {
     pub decrypted_shares: Option<Vec<RistrettoPoint>>,
     pub share_proofs: Option<Vec<(Scalar, Scalar)>>,
     pub validated_shares: Vec<usize>,
+    pub qualified_set: Option<Vec<(usize, RistrettoPoint)>>,
 }
 
 impl Party {
@@ -64,6 +68,7 @@ impl Party {
                 decrypted_shares: None,
                 public_keys: None,
                 validated_shares: vec![],
+                qualified_set: None,
             })
         } else {
             Err(InvalidPararmeterSet(n, t as isize, index).into())
@@ -211,6 +216,31 @@ impl Party {
             None => Err(UninitializedValue("party.encrypted_share").into()),
         }
     }
+
+    pub fn select_qualified_set<R>(&mut self, rng: &mut R) -> Result<(), Error>
+    where
+        R: CryptoRng + RngCore,
+    {
+        match &self.decrypted_shares {
+            Some(decrypted_shares) => {
+                if self.validated_shares.len() > self.t {
+                    let mut tmp = self.validated_shares.clone();
+                    tmp.shuffle(rng);
+                    self.qualified_set = Some(
+                        tmp.into_iter()
+                            .take(self.t + 1)
+                            .map(|x| (x + 1, decrypted_shares[x]))
+                            .collect(),
+                    );
+                    Ok(())
+                } else {
+                    Err(InsufficientShares(self.validated_shares.len(), self.t).into())
+                }
+            }
+            None => Err(UninitializedValue("party.decrypted_shares").into()),
+        }
+    }
+
     pub fn dleq_share<R>(
         &mut self,
         G: &RistrettoPoint,
@@ -307,14 +337,13 @@ impl Party {
         }
     }
     pub fn reconstruct_secret(&self, lambdas: &Vec<Scalar>) -> Result<RistrettoPoint, Error> {
-        match &self.decrypted_shares {
-            Some(dec_shares) => Ok(self
-                .validated_shares
+        match &self.qualified_set {
+            Some(qualified_set) => Ok(qualified_set
                 .par_iter()
-                .take(self.t + 1)
-                .map(|share_index| lambdas[*share_index] * dec_shares[*share_index])
+                .zip(lambdas.par_iter())
+                .map(|((_, decrypted_share), lambda)| lambda * decrypted_share)
                 .sum()),
-            None => Err(UninitializedValue("party.decrypted_shares").into()),
+            None => Err(UninitializedValue("party.qualified_set").into()),
         }
     }
 }

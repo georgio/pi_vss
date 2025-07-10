@@ -7,7 +7,7 @@ mod tests {
 
     use crate::{dealer::Dealer, party::generate_parties};
 
-    use common::utils::precompute_lambda;
+    use common::utils::compute_lagrange_bases;
 
     #[test]
     fn end_to_end() {
@@ -19,8 +19,6 @@ mod tests {
         let mut buf = [0u8; 64];
 
         let G: RistrettoPoint = RistrettoPoint::mul_base(&common::random::random_scalar(&mut rng));
-
-        let lambdas = precompute_lambda(N, T);
 
         let mut parties = generate_parties(&G, &mut rng, N, T);
 
@@ -81,7 +79,19 @@ mod tests {
 
             assert!(p.verify_decrypted_shares(&G).unwrap());
 
-            reconstructed_secrets.push(p.reconstruct_secret(&lambdas).unwrap());
+            p.select_qualified_set(&mut rng).unwrap();
+
+            let indices: Vec<usize> = p
+                .qualified_set
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(index, _)| *index)
+                .collect();
+
+            let lagrange_bases = compute_lagrange_bases(&indices);
+
+            reconstructed_secrets.push(p.reconstruct_secret(&lagrange_bases).unwrap());
         }
         reconstructed_secrets
             .iter()

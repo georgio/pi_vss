@@ -10,6 +10,11 @@ error_chain! {
             description("The number of {c1_type} does not match the number of {c2_type}.")
             display("The number of {c1_type} does not match the number of {c2_type}.\nHave {c1} {c1_type} but the number of {c2} is {c2_type}.")
         }
+        InsufficientShares(count: usize, t: usize){
+            description("The number of validated shares is less than the required threshold.")
+            display("The number of validated shares is {count}. This is less than the required t+1 shares (t+1 = {}).", t+1)
+
+        }
         UninitializedValue(t: &'static str) {
             description("Attempted to operate on an unititalized value")
             display("Attempted to operate on an unititalized value {}", t)

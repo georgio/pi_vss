@@ -21,6 +21,6 @@ blake3 = {version = "1.8.2", features = ["rayon", "zeroize", "traits-preview"]}
 [dev-dependencies]
 criterion = {workspace = true}
 
-# [[bench]]
-# name = "bench"
-# harness = false
+[[bench]]
+name = "bench"
+harness = false

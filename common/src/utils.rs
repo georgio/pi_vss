@@ -1,3 +1,5 @@
+use std::ops::Mul;
+
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rayon::prelude::*;
 
@@ -19,6 +21,29 @@ pub fn precompute_lambda(n: usize, t: usize) -> Vec<Scalar> {
             lambda_i
         })
         .collect()
+}
+
+pub fn compute_lagrange_bases(qualified_set: &Vec<usize>) -> Vec<Scalar> {
+    qualified_set
+        .par_iter()
+        .map(|i| compute_lagrange_basis(*i, qualified_set))
+        .collect()
+}
+
+pub fn compute_lagrange_basis(i: usize, qualified_set: &Vec<usize>) -> Scalar {
+    let zq_i = Scalar::from(i as u64);
+
+    qualified_set
+        .par_iter()
+        .map(|j| {
+            if i == *j {
+                Scalar::ONE
+            } else {
+                let zq_j = Scalar::from(*j as u64);
+                zq_j * ((zq_j - zq_i).invert())
+            }
+        })
+        .reduce(|| Scalar::ONE, Scalar::mul)
 }
 
 pub fn decompress_ristretto_point(

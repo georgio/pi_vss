@@ -1,14 +1,14 @@
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngCore, seq::SliceRandom};
 use zeroize::Zeroize;
 
 use common::{
     error::{
         Error,
         ErrorKind::{
-            CountMismatch, InvalidPararmeterSet, InvalidProof, PointDecompressionError,
-            UninitializedValue,
+            CountMismatch, InsufficientShares, InvalidPararmeterSet, InvalidProof,
+            PointDecompressionError, UninitializedValue,
         },
     },
     polynomial::Polynomial,
@@ -33,7 +33,8 @@ pub struct Party {
     // (f_i, gamma_i)
     pub share: Option<(Scalar, Scalar)>,
     pub d: Option<Scalar>,
-    pub shares: Option<Vec<(usize, Scalar, Scalar)>>,
+    pub shares: Option<Vec<(Scalar, Scalar)>>,
+    pub qualified_set: Option<Vec<(usize, Scalar)>>,
 }
 
 impl Party {
@@ -69,6 +70,7 @@ impl Party {
                 validated_shares: vec![],
                 d: None,
                 shares: None,
+                qualified_set: None,
             })
         } else {
             Err(InvalidPararmeterSet(n, t as isize, index).into())
@@ -152,7 +154,11 @@ impl Party {
         }
     }
 
-    pub fn verify_shares(&self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
+    pub fn verify_shares(
+        &mut self,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+    ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((compressed_cvals, cvals, z)) => match &self.shares {
                 Some(shares) => {
@@ -167,15 +173,24 @@ impl Party {
                     hasher.reset();
                     buf.zeroize();
 
-                    Ok(shares
+                    self.validated_shares = shares
                         .par_iter()
-                        .map(|(index, f_i, g_i)| {
-                            cvals[index - 1]
+                        .enumerate()
+                        .map(|(i, (f_i, g_i))| {
+                            if cvals[i]
                                 == self.g1 * f_i
-                                    + self.g2 * (z.evaluate(*index) - d * f_i)
+                                    + self.g2 * (z.evaluate(i + 1) - d * f_i)
                                     + self.g3 * g_i
+                            {
+                                Some(i)
+                            } else {
+                                None
+                            }
                         })
-                        .reduce(|| true, |acc, res| acc && res))
+                        .filter(Option::is_some)
+                        .map(|res| res.unwrap())
+                        .collect();
+                    Ok(self.validated_shares.len() > self.t)
                 }
                 None => Err(UninitializedValue("party.share").into()),
             },
@@ -183,23 +198,53 @@ impl Party {
         }
     }
 
-    pub fn ingest_shares(&mut self, shares: Vec<(usize, Scalar, Scalar)>) -> Result<(), Error> {
-        if shares.len() == self.n - 1 {
-            self.shares = Some(shares);
+    pub fn ingest_shares(&mut self, shares: &(Vec<Scalar>, Vec<Scalar>)) -> Result<(), Error> {
+        if shares.0.len() == self.n && shares.1.len() == self.n {
+            self.shares = Some(
+                shares
+                    .0
+                    .clone()
+                    .into_iter()
+                    .zip(shares.1.clone().into_iter())
+                    .collect(),
+            );
             Ok(())
         } else {
-            Err(CountMismatch(self.n, "parties", shares.len(), "ingestable shares").into())
+            Err(CountMismatch(self.n, "parties", shares.0.len(), "ingestable shares").into())
         }
     }
 
-    pub fn reconstruct_secret(&self, lambdas: &Vec<Scalar>) -> Result<Scalar, Error> {
+    pub fn select_qualified_set<R>(&mut self, rng: &mut R) -> Result<(), Error>
+    where
+        R: CryptoRng + RngCore,
+    {
         match &self.shares {
-            Some(shares) => Ok(shares
-                .par_iter()
-                .take(self.t + 1)
-                .map(|(index, f_i, _)| lambdas[*index] * f_i)
-                .sum()),
+            Some(shares) => {
+                if self.validated_shares.len() > self.t {
+                    let mut tmp = self.validated_shares.clone();
+                    tmp.shuffle(rng);
+                    self.qualified_set = Some(
+                        tmp.into_iter()
+                            .take(self.t + 1)
+                            .map(|x| (x + 1, shares[x].0))
+                            .collect(),
+                    );
+                    Ok(())
+                } else {
+                    Err(InsufficientShares(self.validated_shares.len(), self.t).into())
+                }
+            }
             None => Err(UninitializedValue("party.decrypted_shares").into()),
+        }
+    }
+    pub fn reconstruct_secret(&self, lambdas: &Vec<Scalar>) -> Result<Scalar, Error> {
+        match &self.qualified_set {
+            Some(qualified_set) => Ok(qualified_set
+                .par_iter()
+                .zip(lambdas.par_iter())
+                .map(|((_, decrypted_share), lambda)| lambda * decrypted_share)
+                .sum()),
+            None => Err(UninitializedValue("party.qualified_set").into()),
         }
     }
 }
