@@ -74,6 +74,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "b_pi_p"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "common",
+ "criterion",
+ "curve25519-dalek",
+ "error-chain",
+ "rand",
+ "rayon",
+ "zeroize",
+]
+
+[[package]]
 name = "backtrace"
 version = "0.3.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"

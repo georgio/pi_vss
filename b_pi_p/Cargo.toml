@@ -1,0 +1,27 @@
+[package]
+name = "b_pi_p"
+version = {workspace = true}
+authors = {workspace = true}
+edition = {workspace = true}
+license = {workspace = true}
+
+[dependencies]
+curve25519-dalek = {workspace = true}
+error-chain = {workspace = true}
+rand = {workspace = true}
+rayon = {workspace = true}
+zeroize = {workspace = true}
+
+common = {path ="../common"}
+
+[target.'cfg(all(target_arch = "aarch64"))'.dependencies]
+blake3 = {version = "1.8.2", features = ["neon", "rayon", "zeroize", "traits-preview"]}
+[target.'cfg(all(target_arch = "x86_64"))'.dependencies]
+blake3 = {version = "1.8.2", features = ["rayon", "zeroize", "traits-preview"]}
+
+[dev-dependencies]
+criterion = {workspace = true}
+
+[[bench]]
+name = "bench"
+harness = false
