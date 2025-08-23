@@ -6,12 +6,14 @@ use std::{
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 
-fn gen_powers(n: usize, t: usize) -> Vec<Vec<Scalar>> {
-    (1..=n)
-        .into_iter()
+use rayon::prelude::*;
+
+pub fn gen_powers(n: usize, t: usize) -> Vec<Vec<Scalar>> {
+    (0..=n)
+        .into_par_iter()
         .map(|i| {
             let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(i as u64)];
-            for i in 2..t {
+            for i in 2..(t + 1) {
                 x_powers.push(x_powers[1] * x_powers[i - 1]);
             }
             x_powers
@@ -71,22 +73,4 @@ impl XPowTable {
             (_, _) => gen_powers(n, t),
         }
     }
-}
-
-fn main() {
-    let table = XPowTable::new();
-
-    let mut file = File::create("./table.json").unwrap();
-
-    file.write_all(&(serde_json::to_vec(&table).unwrap()))
-        .unwrap();
-
-    let mut read_handle = File::open("./table.json").unwrap();
-
-    let mut bytes: Vec<u8> = vec![];
-    read_handle.read_to_end(&mut bytes).unwrap();
-
-    let t2: XPowTable = serde_json::from_slice(&bytes).unwrap();
-    assert!(table == t2);
-    println!("Ok");
 }

@@ -9,6 +9,7 @@ mod tests {
     use crate::{dealer::Dealer, party::generate_parties};
 
     use common::{
+        precompute::gen_powers,
         random::{random_point, random_scalars},
         utils::compute_lagrange_bases,
     };
@@ -24,6 +25,9 @@ mod tests {
         let mut buf = [0u8; 64];
 
         let G: RistrettoPoint = random_point(&mut rng);
+
+        // let xpows = XPowTable::from_params("../table.json", N, T);
+        let xpows = gen_powers(N, T);
 
         let mut parties = generate_parties(&G, &mut rng, N, T);
 
@@ -45,7 +49,7 @@ mod tests {
         let secrets = random_scalars(&mut rng, K);
 
         let (shares, (c_vals, z)) =
-            dealer.deal_secrets_v2(&mut rng, &mut hasher, &mut buf, &secrets);
+            dealer.deal_secrets(&mut rng, &mut hasher, &mut buf, &xpows, &secrets);
 
         for p in &mut parties {
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();

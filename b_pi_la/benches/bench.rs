@@ -6,6 +6,7 @@ use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 
 use common::{
     polynomial::Polynomial,
+    precompute::gen_powers,
     random::{random_point, random_scalar, random_scalars},
     utils::compute_lagrange_bases,
 };
@@ -44,6 +45,8 @@ fn vss_proof(c: &mut Criterion) {
     let t = 255;
     let k = 10;
 
+    let xpows = gen_powers(n, t);
+
     let G: RistrettoPoint = random_point(&mut rng);
 
     let mut parties = generate_parties(&G, &mut rng, n, t);
@@ -55,7 +58,7 @@ fn vss_proof(c: &mut Criterion) {
 
     let mut secrets = random_scalars(&mut rng, k);
 
-    let (mut f_polynomials, f_evals) = dealer.generate_shares(k, &secrets);
+    let (mut f_polynomials, f_evals) = dealer.generate_shares(&xpows, k, &secrets);
 
     // end sharing
 
@@ -351,6 +354,7 @@ fn VSS(c: &mut Criterion) {
             let mut buf: [u8; 64] = [0u8; 64];
 
             let G: RistrettoPoint = random_point(&mut rng);
+            let xpows = gen_powers(n, t);
 
             let mut parties = generate_parties(&G, &mut rng, n, t);
 
@@ -392,14 +396,10 @@ fn VSS(c: &mut Criterion) {
                     "(k: {}, n: {}, t: {}) | B_Pi_LA VSS | Dealer: Generate Shares",
                     k, n, t
                 ),
-                |b| b.iter(|| dealer.generate_shares(k, &secrets)),
+                |b| b.iter(|| dealer.generate_shares(&xpows, k, &secrets)),
             );
 
-            let (f_polynomials, f_evals) = dealer.generate_shares(k, &secrets);
-            let eval_bytes: Vec<Vec<u8>> = f_evals
-                .par_iter()
-                .flat_map(|f_eval| f_eval.par_iter().map(|eval| eval.as_bytes().to_vec()))
-                .collect();
+            let (f_polynomials, f_evals) = dealer.generate_shares(&xpows, k, &secrets);
 
             c.bench_function(
                 &format!(
@@ -421,6 +421,7 @@ fn VSS(c: &mut Criterion) {
                                 &mut hasher,
                                 &mut buf,
                                 &mut c_buf,
+                                &xpows,
                                 k,
                                 &f_polynomials,
                                 &f_evals,
@@ -432,7 +433,7 @@ fn VSS(c: &mut Criterion) {
             );
 
             let (shares, (c_vals, z)) =
-                dealer.deal_secrets_v2(&mut rng, &mut hasher, &mut buf, &mut secrets);
+                dealer.deal_secrets(&mut rng, &mut hasher, &mut buf, &xpows, &mut secrets);
 
             for p in &mut parties {
                 p.ingest_shares(&shares).unwrap();

@@ -1,4 +1,4 @@
-use blake3::{Hash, Hasher};
+use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rand::{CryptoRng, RngCore, seq::SliceRandom};
 use zeroize::Zeroize;
@@ -103,41 +103,32 @@ impl Party {
 
     pub fn verify_share(&mut self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
         match &self.dealer_proof {
-            Some((cvals, z)) => {
-                match &self.share {
-                    Some(share) => {
-                        let k = share.len();
+            Some((cvals, z)) => match &self.share {
+                Some(share) => {
+                    let k = share.len();
 
-                        let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
+                    let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
 
-                        let mut l_hasher = Hasher::new();
+                    let mut l_hasher = Hasher::new();
 
-                        let z_eval = z.evaluate(self.index);
-                        let r_val = Polynomial::compute_r_eval(&z_eval, &share, &d_vals);
+                    let z_eval = z.evaluate(self.index);
+                    let r_val = Polynomial::compute_r_eval(&z_eval, &share, &d_vals);
 
-                        let bytes: Vec<u8> =
-                            share.par_iter().flat_map(|fi_k| fi_k.to_bytes()).collect();
+                    share.iter().for_each(|fi_k| {
+                        l_hasher.update(fi_k.as_bytes());
+                    });
 
-                        l_hasher.update(&bytes);
+                    l_hasher.update(r_val.as_bytes());
 
-                        // compare speed with above
+                    l_hasher.finalize_xof().fill(buf);
+                    l_hasher.reset();
 
-                        // share.iter().for_each(|fi_k| {
-                        // l_hasher.update(fi_k.as_bytes());
-                        // });
-
-                        l_hasher.update(r_val.as_bytes());
-
-                        l_hasher.finalize_xof().fill(buf);
-                        l_hasher.reset();
-
-                        let check_bit = cvals[self.index - 1] == *buf;
-                        buf.zeroize();
-                        Ok(check_bit)
-                    }
-                    None => Err(UninitializedValue("party.share").into()),
+                    let check_bit = cvals[self.index - 1] == *buf;
+                    buf.zeroize();
+                    Ok(check_bit)
                 }
-            }
+                None => Err(UninitializedValue("party.share").into()),
+            },
             None => Err(UninitializedValue("party.dealer_proof").into()),
         }
     }
@@ -148,50 +139,43 @@ impl Party {
         buf: &mut [u8; 64],
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
-            Some((cvals, z)) => {
-                match &self.shares {
-                    Some(shares) => {
-                        let k = shares[0].len();
+            Some((cvals, z)) => match &self.shares {
+                Some(shares) => {
+                    let k = shares[0].len();
 
-                        let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
+                    let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
 
-                        let z_evals = Polynomial::evaluate_range(&z, 1, self.n);
+                    let z_evals = Polynomial::evaluate_range(&z, 1, self.n);
 
-                        self.validated_shares = (0..self.n)
-                            .into_par_iter()
-                            .map_init(
-                                || (Hasher::new(), [0u8; 64]),
-                                |(l_hasher, l_buf), i| {
-                                    // maybe possible to collect all bytes and flatten
+                    self.validated_shares = (0..self.n)
+                        .into_par_iter()
+                        .map_init(
+                            || (Hasher::new(), [0u8; 64]),
+                            |(l_hasher, l_buf), i| {
+                                let r_val =
+                                    Polynomial::compute_r_eval(&z_evals[i], &shares[i], &d_vals);
 
-                                    let r_val = Polynomial::compute_r_eval(
-                                        &z_evals[i],
-                                        &shares[i],
-                                        &d_vals,
-                                    );
+                                shares[i].iter().for_each(|fi_k| {
+                                    l_hasher.update(fi_k.as_bytes());
+                                });
 
-                                    shares[i].iter().for_each(|fi_k| {
-                                        l_hasher.update(fi_k.as_bytes());
-                                    });
+                                l_hasher.update(r_val.as_bytes());
 
-                                    l_hasher.update(r_val.as_bytes());
+                                l_hasher.finalize_xof().fill(l_buf);
+                                l_hasher.reset();
 
-                                    l_hasher.finalize_xof().fill(l_buf);
-                                    l_hasher.reset();
-
-                                    let check_bit = cvals[i] == *l_buf;
-                                    l_buf.zeroize();
-                                    if check_bit { Some(i) } else { None }
-                                },
-                            )
-                            .filter(Option::is_some)
-                            .map(|res| res.unwrap())
-                            .collect();
-                        Ok(self.validated_shares.len() > self.t)
-                    }
-                    None => Err(UninitializedValue("party.share").into()),
+                                let check_bit = cvals[i] == *l_buf;
+                                l_buf.zeroize();
+                                if check_bit { Some(i) } else { None }
+                            },
+                        )
+                        .filter(Option::is_some)
+                        .map(|res| res.unwrap())
+                        .collect();
+                    Ok(self.validated_shares.len() > self.t)
                 }
-            }
+                None => Err(UninitializedValue("party.share").into()),
+            },
             None => Err(UninitializedValue("party.dealer_proof").into()),
         }
     }

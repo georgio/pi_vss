@@ -154,13 +154,38 @@ impl Polynomial {
     }
 
     // assuming all polynomials are of same degree, panics otherwise
+    pub fn evaluate_many_range_precomp(
+        x_powers: &Vec<Vec<Scalar>>,
+        polynomials: &[Self],
+        from: usize,
+        to: usize,
+    ) -> Vec<Vec<Scalar>> {
+        (from..=to)
+            .into_par_iter()
+            .map(|i| {
+                polynomials
+                    .par_iter()
+                    .map(|polynomial| {
+                        polynomial
+                            .coefficients
+                            .iter()
+                            .zip(&x_powers[i])
+                            .map(|(coef, x_pow)| coef * x_pow)
+                            .sum()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    // assuming all polynomials are of same degree, panics otherwise
     pub fn evaluate_range_precomp(
         &self,
         x_powers: &Vec<Vec<Scalar>>,
         from: usize,
         to: usize,
     ) -> Vec<Scalar> {
-        (from - 1..to)
+        (from..=to)
             .into_par_iter()
             .map(|i| {
                 self.coefficients
