@@ -40,6 +40,21 @@ where
     point
 }
 
+pub fn random_points<R>(rng: &mut R, n: usize) -> Vec<RistrettoPoint>
+where
+    R: CryptoRng + RngCore,
+{
+    let mut bytes = [0u8; 64];
+    (0..n)
+        .map(|_| {
+            rng.fill_bytes(&mut bytes);
+            let point = RistrettoPoint::from_uniform_bytes(&bytes);
+            bytes.zeroize();
+            point
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod test {
     use curve25519_dalek::Scalar;

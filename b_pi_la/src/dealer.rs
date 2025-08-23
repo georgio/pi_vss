@@ -84,7 +84,7 @@ impl Dealer {
         let f_polynomials = Polynomial::sample_n_set_f0(k, self.t, secrets).unwrap();
         // evals is vec[vec[k]; n]
         let f_evals = Polynomial::evaluate_many_range_precomp(
-            &x_pows,
+            x_pows,
             &f_polynomials,
             1,
             self.public_keys.len(),
