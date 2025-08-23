@@ -1,9 +1,57 @@
 use std::ops::Mul;
 
+use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rayon::prelude::*;
+use zeroize::Zeroize;
 
 use crate::error::{Error, ErrorKind::PointDecompressionError};
+
+pub fn pointwise_op_in_place(
+    op: fn(Scalar, Scalar) -> Scalar,
+    a: &mut Vec<Scalar>,
+    b: &Vec<Scalar>,
+) {
+    a.par_iter_mut().zip(b.par_iter()).for_each(|(a_i, b_i)| {
+        *a_i = op(*a_i, *b_i);
+    });
+}
+
+pub fn compute_d_from_commitments(
+    hasher: &mut Hasher,
+    buf: &mut [u8; 64],
+    commitments: &Vec<[u8; 64]>,
+) -> Scalar {
+    let flat_vec: Vec<u8> = commitments.clone().into_iter().flatten().collect();
+
+    hasher.update(flat_vec.as_slice());
+    hasher.finalize_xof().fill(buf);
+    hasher.reset();
+
+    let d = Scalar::from_bytes_mod_order_wide(buf);
+    buf.zeroize();
+    d
+}
+
+pub fn compute_d_powers_from_commitments(
+    hasher: &mut Hasher,
+    buf: &mut [u8; 64],
+    commitments: &Vec<[u8; 64]>,
+    k: usize,
+) -> Vec<Scalar> {
+    let d = compute_d_from_commitments(hasher, buf, commitments);
+
+    let mut d_vals: Vec<Scalar> = Vec::with_capacity(k);
+    // [d^1,
+    d_vals.push(d);
+
+    // d^2, d^3, ... d^k]
+    for i in 1..k {
+        d_vals.push(d_vals[i - 1] * d);
+    }
+    //
+    d_vals
+}
 
 pub fn precompute_lambda(n: usize, t: usize) -> Vec<Scalar> {
     (1..=n)

@@ -1,4 +1,4 @@
-use blake3::Hasher;
+use blake3::{Hash, Hasher};
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rand::{CryptoRng, RngCore, seq::SliceRandom};
 use zeroize::Zeroize;
@@ -13,7 +13,7 @@ use common::{
     },
     polynomial::Polynomial,
     random::random_scalar,
-    utils::{batch_decompress_ristretto_points, compute_d_from_commitments},
+    utils::{batch_decompress_ristretto_points, compute_d_powers_from_commitments},
 };
 use rayon::prelude::*;
 
@@ -27,10 +27,9 @@ pub struct Party {
     pub public_keys: Option<Vec<RistrettoPoint>>,
     pub dealer_proof: Option<(Vec<[u8; 64]>, Polynomial)>,
     pub validated_shares: Vec<usize>,
-    pub share: Option<Scalar>,
-    pub d: Option<Scalar>,
-    pub shares: Option<Vec<Scalar>>,
-    pub qualified_set: Option<Vec<(usize, Scalar)>>,
+    pub share: Option<Vec<Scalar>>,
+    pub shares: Option<Vec<Vec<Scalar>>>,
+    pub qualified_set: Option<Vec<(usize, Vec<Scalar>)>>,
 }
 
 impl Party {
@@ -58,7 +57,6 @@ impl Party {
                 share: None,
                 public_keys: None,
                 validated_shares: vec![],
-                d: None,
                 shares: None,
                 qualified_set: None,
             })
@@ -67,7 +65,7 @@ impl Party {
         }
     }
 
-    pub fn ingest_share(&mut self, share: &Scalar) {
+    pub fn ingest_share(&mut self, share: &Vec<Scalar>) {
         self.share = Some(share.clone());
     }
 
@@ -94,7 +92,7 @@ impl Party {
         proof: (&Vec<[u8; 64]>, &Polynomial),
     ) -> Result<(), Error> {
         if proof.1.len() != self.t + 1 {
-            Err(InvalidProof(format!("z len: {}, t: {}", proof.1.len(), self.t + 1)).into())
+            Err(InvalidProof(format!("z len: {}, t: {}", proof.1.len(), self.t)).into())
         } else if proof.0.len() != self.n {
             Err(InvalidProof(format!("c_vals len: {}, n: {}", proof.0.len(), self.n)).into())
         } else {
@@ -103,28 +101,43 @@ impl Party {
         }
     }
 
-    pub fn verify_share(&self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
+    pub fn verify_share(&mut self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
         match &self.dealer_proof {
-            Some((c_vals, z)) => match &self.share {
-                Some(fi) => {
-                    let d = compute_d_from_commitments(hasher, buf, c_vals);
+            Some((cvals, z)) => {
+                match &self.share {
+                    Some(share) => {
+                        let k = share.len();
 
-                    hasher.update(fi.as_bytes());
-                    hasher.update(
-                        Polynomial::compute_r_eval(&z.evaluate(self.index), &[*fi], &[d])
-                            .as_bytes(),
-                    );
+                        let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
 
-                    hasher.finalize_xof().fill(buf);
-                    hasher.reset();
+                        let mut l_hasher = Hasher::new();
 
-                    let check_bit = &c_vals[self.index - 1] == buf;
-                    buf.zeroize();
+                        let z_eval = z.evaluate(self.index);
+                        let r_val = Polynomial::compute_r_eval(&z_eval, &share, &d_vals);
 
-                    Ok(check_bit)
+                        let bytes: Vec<u8> =
+                            share.par_iter().flat_map(|fi_k| fi_k.to_bytes()).collect();
+
+                        l_hasher.update(&bytes);
+
+                        // compare speed with above
+
+                        // share.iter().for_each(|fi_k| {
+                        // l_hasher.update(fi_k.as_bytes());
+                        // });
+
+                        l_hasher.update(r_val.as_bytes());
+
+                        l_hasher.finalize_xof().fill(buf);
+                        l_hasher.reset();
+
+                        let check_bit = cvals[self.index - 1] == *buf;
+                        buf.zeroize();
+                        Ok(check_bit)
+                    }
+                    None => Err(UninitializedValue("party.share").into()),
                 }
-                None => Err(UninitializedValue("party.share").into()),
-            },
+            }
             None => Err(UninitializedValue("party.dealer_proof").into()),
         }
     }
@@ -135,43 +148,55 @@ impl Party {
         buf: &mut [u8; 64],
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
-            Some((cvals, z)) => match &self.shares {
-                Some(shares) => {
-                    let d = compute_d_from_commitments(hasher, buf, cvals);
-                    let z_evals = z.evaluate_range(1, self.n);
+            Some((cvals, z)) => {
+                match &self.shares {
+                    Some(shares) => {
+                        let k = shares[0].len();
 
-                    self.validated_shares = shares
-                        .par_iter()
-                        .zip(z_evals.par_iter())
-                        .enumerate()
-                        .map_init(
-                            || (Hasher::new(), [0u8; 64]),
-                            |(l_hasher, l_buf), (i, (fi, zi))| {
-                                l_hasher.update(fi.as_bytes());
-                                l_hasher.update(
-                                    (Polynomial::compute_r_eval(zi, &[*fi], &[d])).as_bytes(),
-                                );
+                        let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
 
-                                l_hasher.finalize_xof().fill(l_buf);
-                                l_hasher.reset();
+                        let z_evals = Polynomial::evaluate_range(&z, 1, self.n);
 
-                                let check_bit = cvals[i] == *l_buf;
-                                l_buf.zeroize();
-                                if check_bit { Some(i) } else { None }
-                            },
-                        )
-                        .filter(Option::is_some)
-                        .map(|res| res.unwrap())
-                        .collect();
-                    Ok(self.validated_shares.len() > self.t)
+                        self.validated_shares = (0..self.n)
+                            .into_par_iter()
+                            .map_init(
+                                || (Hasher::new(), [0u8; 64]),
+                                |(l_hasher, l_buf), i| {
+                                    // maybe possible to collect all bytes and flatten
+
+                                    let r_val = Polynomial::compute_r_eval(
+                                        &z_evals[i],
+                                        &shares[i],
+                                        &d_vals,
+                                    );
+
+                                    shares[i].iter().for_each(|fi_k| {
+                                        l_hasher.update(fi_k.as_bytes());
+                                    });
+
+                                    l_hasher.update(r_val.as_bytes());
+
+                                    l_hasher.finalize_xof().fill(l_buf);
+                                    l_hasher.reset();
+
+                                    let check_bit = cvals[i] == *l_buf;
+                                    l_buf.zeroize();
+                                    if check_bit { Some(i) } else { None }
+                                },
+                            )
+                            .filter(Option::is_some)
+                            .map(|res| res.unwrap())
+                            .collect();
+                        Ok(self.validated_shares.len() > self.t)
+                    }
+                    None => Err(UninitializedValue("party.share").into()),
                 }
-                None => Err(UninitializedValue("party.share").into()),
-            },
+            }
             None => Err(UninitializedValue("party.dealer_proof").into()),
         }
     }
 
-    pub fn ingest_shares(&mut self, shares: &Vec<Scalar>) -> Result<(), Error> {
+    pub fn ingest_shares(&mut self, shares: &Vec<Vec<Scalar>>) -> Result<(), Error> {
         if shares.len() == self.n {
             self.shares = Some(shares.clone());
             Ok(())
@@ -192,7 +217,7 @@ impl Party {
                     self.qualified_set = Some(
                         tmp.into_iter()
                             .take(self.t + 1)
-                            .map(|x| (x + 1, shares[x]))
+                            .map(|x| (x + 1, shares[x].clone()))
                             .collect(),
                     );
                     Ok(())
@@ -203,13 +228,27 @@ impl Party {
             None => Err(UninitializedValue("party.decrypted_shares").into()),
         }
     }
-    pub fn reconstruct_secret(&self, lambdas: &Vec<Scalar>) -> Result<Scalar, Error> {
+    pub fn reconstruct_secrets(&self, lambdas: &Vec<Scalar>) -> Result<Vec<Scalar>, Error> {
         match &self.qualified_set {
-            Some(qualified_set) => Ok(qualified_set
-                .par_iter()
-                .zip(lambdas.par_iter())
-                .map(|((_, share), lambda)| lambda * share)
-                .sum()),
+            Some(qualified_set) => {
+                let scaled_shares: Vec<Vec<Scalar>> = qualified_set
+                    .par_iter()
+                    .zip(lambdas.par_iter())
+                    .map(|((_, poly_share), lambda)| {
+                        poly_share.par_iter().map(|share| lambda * share).collect()
+                    })
+                    .collect();
+
+                let mut out = vec![Scalar::ZERO; scaled_shares[0].len()];
+
+                for k in 0..(&scaled_shares[0]).len() {
+                    for share in &scaled_shares {
+                        out[k] += share[k];
+                    }
+                }
+
+                Ok(out)
+            }
             None => Err(UninitializedValue("party.qualified_set").into()),
         }
     }

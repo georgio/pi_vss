@@ -6,15 +6,17 @@ use common::{
     random::{random_point, random_scalar},
     utils::compute_lagrange_bases,
 };
+use rayon::prelude::*;
 
 fn pvss(c: &mut Criterion) {
     for (n, t) in [
+        // (32, 15),
         (64, 31),
-        (128, 63),
-        (256, 127),
-        (512, 255),
-        (1024, 511),
-        (2048, 1023),
+        // (128, 63),
+        // (256, 127),
+        // (512, 255),
+        // (1024, 511),
+        // (2048, 1023),
     ] {
         let mut rng = rand::rng();
         let mut hasher = blake3::Hasher::new();
@@ -41,21 +43,113 @@ fn pvss(c: &mut Criterion) {
 
         let secret = random_scalar(&mut rng);
 
-        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
-
+        // c.bench_function(
+        //     &format!("(n: {}, t: {}) | Pi_LA VSS | Dealer: Deal Secret", n, t),
+        //     |b| {
+        //         b.iter_batched(
+        //             || (blake3::Hasher::new(), [0u8; 64]),
+        //             |(mut hasher, mut buf)| {
+        //                 dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret)
+        //             },
+        //             BatchSize::PerIteration,
+        //         )
+        //     },
+        // );
+        // c.bench_function(
+        //     &format!("(n: {}, t: {}) | Pi_LA VSS | Dealer: Deal Secret_v2", n, t),
+        //     |b| {
+        //         b.iter_batched(
+        //             || (blake3::Hasher::new(), [0u8; 64]),
+        //             |(mut hasher, mut buf)| {
+        //                 dealer.deal_secret_v2(&mut rng, &mut hasher, &mut buf, &secret)
+        //             },
+        //             BatchSize::PerIteration,
+        //         )
+        //     },
+        // );
         c.bench_function(
-            &format!("(n: {}, t: {}) | Pi_LA PVSS | Dealer: Deal Secret", n, t),
+            &format!("(n: {}, t: {}) | Pi_LA VSS | Dealer: Generate Shares", n, t),
             |b| {
                 b.iter_batched(
-                    || (blake3::Hasher::new(), [0u8; 64]),
-                    |(mut hasher, mut buf)| {
-                        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret)
-                    },
+                    || random_scalar(&mut rand::rng()),
+                    |secret| dealer.generate_shares(&mut rng, &secret),
                     BatchSize::PerIteration,
                 )
             },
         );
 
+        c.bench_function(
+            &format!("(n: {}, t: {}) | Pi_LA VSS | Dealer: Generate Proof", n, t),
+            |b| {
+                b.iter_batched(
+                    || {
+                        (
+                            blake3::Hasher::new(),
+                            [0u8; 64],
+                            dealer.generate_shares(&mut rand::rng(), &secret),
+                        )
+                    },
+                    |(mut hasher, mut buf, (f_polynomial, f_evals))| {
+                        dealer.generate_proof(
+                            &mut rng,
+                            &mut hasher,
+                            &mut buf,
+                            f_polynomial,
+                            &f_evals,
+                        );
+                    },
+                    BatchSize::PerIteration,
+                )
+            },
+        );
+        // c.bench_function(
+        //     &format!(
+        //         "(n: {}, t: {}) | Pi_LA VSS | Dealer: Generate Proof (1k)",
+        //         n, t
+        //     ),
+        //     |b| {
+        //         b.iter_batched(
+        //             || dealer.generate_shares(&mut rand::rng(), &secret),
+        //             |(f_polynomial, f_evals)| {
+        //                 (0..1000).into_par_iter().for_each(|_| {
+        //                     dealer.generate_proof(
+        //                         &mut rand::rng(),
+        //                         &mut blake3::Hasher::new(),
+        //                         &mut [0u8; 64],
+        //                         f_polynomial.clone(),
+        //                         &f_evals,
+        //                     );
+        //                 });
+        //             },
+        //             BatchSize::PerIteration,
+        //         )
+        //     },
+        // );
+        // c.bench_function(
+        //     &format!(
+        //         "(n: {}, t: {}) | Pi_LA VSS | Dealer: Generate Proof (10k)",
+        //         n, t
+        //     ),
+        //     |b| {
+        //         b.iter_batched(
+        //             || dealer.generate_shares(&mut rand::rng(), &secret),
+        //             |(f_polynomial, f_evals)| {
+        //                 (0..10000).into_par_iter().for_each(|_| {
+        //                     dealer.generate_proof(
+        //                         &mut rand::rng(),
+        //                         &mut blake3::Hasher::new(),
+        //                         &mut [0u8; 64],
+        //                         f_polynomial.clone(),
+        //                         &f_evals,
+        //                     );
+        //                 });
+        //             },
+        //             BatchSize::PerIteration,
+        //         )
+        //     },
+        // );
+
+        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
         for p in &mut parties {
             p.ingest_shares(&shares).unwrap();
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();
@@ -67,7 +161,7 @@ fn pvss(c: &mut Criterion) {
         }
 
         c.bench_function(
-            &format!("(n: {}, t: {}) | Pi_LA PVSS | Party: Verify Shares", n, t),
+            &format!("(n: {}, t: {}) | Pi_LA VSS | Party: Verify Shares", n, t),
             |b| {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
@@ -79,46 +173,90 @@ fn pvss(c: &mut Criterion) {
             },
         );
 
-        for p in &mut parties {
-            p.select_qualified_set(&mut rng).unwrap();
+        // c.bench_function(
+        //     &format!(
+        //         "(n: {}, t: {}) | Pi_LA VSS | Party: Verify Shares (1k)",
+        //         n, t
+        //     ),
+        //     |b| {
+        //         b.iter_batched(
+        //             || (blake3::Hasher::new(), [0u8; 64]),
+        //             |(mut hasher, mut buf)| {
+        //                 (0..1000).into_par_iter().for_each(|_| {
+        //                     assert!(
+        //                         parties[0]
+        //                             .clone()
+        //                             .verify_shares(&mut hasher.clone(), &mut buf.clone())
+        //                             .unwrap()
+        //                     )
+        //                 });
+        //             },
+        //             BatchSize::PerIteration,
+        //         )
+        //     },
+        // );
+        // c.bench_function(
+        //     &format!(
+        //         "(n: {}, t: {}) | Pi_LA VSS | Party: Verify Shares (10k)",
+        //         n, t
+        //     ),
+        //     |b| {
+        //         b.iter_batched(
+        //             || (parties[0].clone(), blake3::Hasher::new(), [0u8; 64]),
+        //             |(mut p, mut hasher, mut buf)| {
+        //                 (0..10000).into_par_iter().for_each(|_| {
+        //                     assert!(
+        //                         p.clone()
+        //                             .verify_shares(&mut hasher.clone(), &mut buf.clone())
+        //                             .unwrap()
+        //                     )
+        //                 });
+        //             },
+        //             BatchSize::PerIteration,
+        //         )
+        //     },
+        // );
 
-            let indices: Vec<usize> = p
-                .qualified_set
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|(index, _)| *index)
-                .collect();
+        // for p in &mut parties {
+        //     p.select_qualified_set(&mut rng).unwrap();
 
-            let lagrange_bases = compute_lagrange_bases(&indices);
+        //     let indices: Vec<usize> = p
+        //         .qualified_set
+        //         .as_ref()
+        //         .unwrap()
+        //         .iter()
+        //         .map(|(index, _)| *index)
+        //         .collect();
 
-            let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
-            assert!(sec == secret);
-        }
+        //     let lagrange_bases = compute_lagrange_bases(&indices);
 
-        parties[0].select_qualified_set(&mut rng).unwrap();
+        //     let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
+        //     assert!(sec == secret);
+        // }
 
-        let indices: Vec<usize> = parties[0]
-            .qualified_set
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|(index, _)| *index)
-            .collect();
+        // parties[0].select_qualified_set(&mut rng).unwrap();
 
-        let lagrange_bases = compute_lagrange_bases(&indices);
+        // let indices: Vec<usize> = parties[0]
+        //     .qualified_set
+        //     .as_ref()
+        //     .unwrap()
+        //     .iter()
+        //     .map(|(index, _)| *index)
+        //     .collect();
 
-        c.bench_function(
-            &format!(
-                "(n: {}, t: {}) | Pi_LA PVSS | Party: Reconstruct Secret",
-                n, t
-            ),
-            |b| {
-                b.iter(|| {
-                    parties[0].reconstruct_secret(&lagrange_bases).unwrap();
-                })
-            },
-        );
+        // let lagrange_bases = compute_lagrange_bases(&indices);
+
+        // c.bench_function(
+        //     &format!(
+        //         "(n: {}, t: {}) | Pi_LA VSS | Party: Reconstruct Secret",
+        //         n, t
+        //     ),
+        //     |b| {
+        //         b.iter(|| {
+        //             parties[0].reconstruct_secret(&lagrange_bases).unwrap();
+        //         })
+        //     },
+        // );
     }
 }
 

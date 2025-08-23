@@ -3,16 +3,28 @@ use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
-use crate::random::random_scalar;
+use crate::{
+    error::{Error, ErrorKind::CountMismatch},
+    random::{random_scalar, random_scalars},
+    utils::pointwise_op_in_place,
+};
 
 #[derive(Clone)]
 pub struct Polynomial {
-    coefficients: Vec<Scalar>,
+    pub coefficients: Vec<Scalar>,
 }
 
 impl Polynomial {
     pub fn len(&self) -> usize {
         self.coefficients.len()
+    }
+
+    pub fn coef_ref<'a>(&'a self) -> &'a Vec<Scalar> {
+        &self.coefficients
+    }
+
+    pub fn coef_mut<'a>(&'a mut self) -> &'a mut Vec<Scalar> {
+        &mut self.coefficients
     }
 
     pub fn coef_at(&self, index: usize) -> Option<Scalar> {
@@ -22,13 +34,19 @@ impl Polynomial {
             None
         }
     }
+    pub fn coef_at_unchecked<'a>(&'a self, index: usize) -> &'a Scalar {
+        &self.coefficients[index]
+    }
+    pub fn from_coefficients(coefs: Vec<Scalar>) -> Self {
+        Self {
+            coefficients: coefs,
+        }
+    }
     pub fn sample<R>(degree: usize, rng: &mut R) -> Self
     where
         R: CryptoRng + RngCore,
     {
-        Polynomial {
-            coefficients: (0..=degree).map(|_| random_scalar(rng)).collect(),
-        }
+        Polynomial::from_coefficients(random_scalars(rng, degree + 1))
     }
 
     pub fn sample_set_f0<R>(degree: usize, rng: &mut R, f0: &Scalar) -> Self
@@ -60,6 +78,35 @@ impl Polynomial {
             },
         )
     }
+
+    pub fn sample_n<R>(n: usize, degree: usize, rng: &mut R) -> Vec<Self>
+    where
+        R: CryptoRng + RngCore,
+    {
+        (0..n)
+            .into_par_iter()
+            .map_init(|| rand::rng(), |mut rng, _| Self::sample(degree, &mut rng))
+            .collect()
+    }
+
+    pub fn sample_n_set_f0(
+        n: usize,
+        degree: usize,
+        f0_vals: &Vec<Scalar>,
+    ) -> Result<Vec<Self>, Error> {
+        match f0_vals.len() == n {
+            true => Ok((0..n)
+                .into_par_iter()
+                .zip(f0_vals)
+                .map_init(
+                    || rand::rng(),
+                    |mut rng, (_, f0)| Self::sample_set_f0(degree, &mut rng, &f0),
+                )
+                .collect()),
+            false => Err(CountMismatch(n, "degree", f0_vals.len(), "f0 values").into()),
+        }
+    }
+
     pub fn sample_two_set_f0<R>(degree: usize, f0: &Scalar, rng: &mut R) -> (Self, Self)
     where
         R: CryptoRng + RngCore,
@@ -79,6 +126,72 @@ impl Polynomial {
             },
         )
     }
+
+    // assuming all polynomials are of same degree, panics otherwise
+    pub fn evaluate_many_range(polynomials: &[Self], from: usize, to: usize) -> Vec<Vec<Scalar>> {
+        (from..=to)
+            .into_par_iter()
+            .map(|i| {
+                let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(i as u64)];
+
+                for i in 2..polynomials[0].coefficients.len() {
+                    x_powers.push(x_powers[1] * x_powers[i - 1]);
+                }
+
+                polynomials
+                    .par_iter()
+                    .map(|polynomial| {
+                        polynomial
+                            .coefficients
+                            .iter()
+                            .zip(&x_powers)
+                            .map(|(coef, x_pow)| coef * x_pow)
+                            .sum()
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    // assuming all polynomials are of same degree, panics otherwise
+    pub fn evaluate_range_precomp(
+        &self,
+        x_powers: &Vec<Vec<Scalar>>,
+        from: usize,
+        to: usize,
+    ) -> Vec<Scalar> {
+        (from - 1..to)
+            .into_par_iter()
+            .map(|i| {
+                self.coefficients
+                    .par_iter()
+                    .zip(&x_powers[i])
+                    .map(|(coef, x_pow)| coef * x_pow)
+                    .sum()
+            })
+            .collect()
+    }
+
+    // assuming all polynomials are of same degree, panics otherwise
+    pub fn evaluate_range(&self, from: usize, to: usize) -> Vec<Scalar> {
+        (from..=to)
+            .into_par_iter()
+            .map(|i| {
+                let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(i as u64)];
+
+                for i in 2..self.coefficients.len() {
+                    x_powers.push(x_powers[1] * x_powers[i - 1]);
+                }
+
+                self.coefficients
+                    .par_iter()
+                    .zip(x_powers)
+                    .map(|(coef, x_pow)| coef * x_pow)
+                    .sum()
+            })
+            .collect()
+    }
+
     pub fn evaluate(&self, x: usize) -> Scalar {
         let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(x as u64)];
 
@@ -257,6 +370,27 @@ impl Polynomial {
         }
     }
 
+    pub fn op_in_place(&mut self, op: fn(Scalar, Scalar) -> Scalar, p2: &Self) {
+        pointwise_op_in_place(op, self.coef_mut(), p2.coef_ref());
+    }
+
+    pub fn op_many_in_place(&mut self, op: fn(Scalar, Scalar) -> Scalar, ps: &[Polynomial]) {
+        ps.iter().for_each(|p| {
+            pointwise_op_in_place(op, self.coef_mut(), p.coef_ref());
+        });
+    }
+
+    pub fn fold_op(op: fn(Scalar, Scalar) -> Scalar, polynomials: &Vec<Self>) -> Self {
+        let mut accumulator = polynomials[0].clone();
+        accumulator.op_many_in_place(op, &polynomials[1..polynomials.len()]);
+
+        accumulator
+    }
+
+    pub fn fold_op_into(&mut self, op: fn(Scalar, Scalar) -> Scalar, polynomials: &Vec<Self>) {
+        self.op_many_in_place(op, &polynomials);
+    }
+
     pub fn coef_op(&self, f: fn(Scalar, Scalar) -> Scalar, x: &Scalar) -> Self {
         Self {
             coefficients: self
@@ -289,7 +423,42 @@ impl Polynomial {
                 *p1_coef += p2_coef
             });
     }
+    pub fn mul_many_sum(&mut self, mul_val: &Scalar, p2: &Self) {
+        self.coefficients
+            .par_iter_mut()
+            .zip(p2.coefficients.par_iter())
+            .for_each(|(p1_coef, p2_coef)| {
+                *p1_coef *= mul_val;
+                *p1_coef += p2_coef
+            });
+    }
+
+    // The input here is &mut r(x), &[f1...fk] , &[d1...dk]
+    // z = r + ( ∑ d_j * f_j )
+    pub fn compute_z(&mut self, f_polynomials: &[Self], d_vals: &[Scalar]) {
+        self.coef_mut()
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, r_coef)| {
+                *r_coef += f_polynomials
+                    .par_iter()
+                    .zip(d_vals.par_iter())
+                    .map(|(f_k, d_k)| f_k.coef_ref()[i] * d_k)
+                    .sum::<Scalar>();
+            });
+    }
+
+    // The input here is &z(x), &[f1(x)...fk(x)] , &[d1...dk]
+    pub fn compute_r_eval(z_eval: &Scalar, f_evals: &[Scalar], d_vals: &[Scalar]) -> Scalar {
+        z_eval
+            - f_evals
+                .par_iter()
+                .zip(d_vals.par_iter())
+                .map(|(f_k, d_k)| f_k * d_k)
+                .sum::<Scalar>()
+    }
 }
+
 impl std::fmt::Display for Polynomial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -301,5 +470,102 @@ impl std::fmt::Display for Polynomial {
                 .collect::<Vec<String>>()
                 .join(",")
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use curve25519_dalek::Scalar;
+
+    use crate::{polynomial::Polynomial, random::random_scalar};
+
+    #[test]
+    fn test_thing() {
+        // f1(x) = 13x^3 + 2x^2 + 7x + 128
+        let f1 = Polynomial {
+            coefficients: vec![128u8.into(), 7u8.into(), 2u8.into(), 13u8.into()],
+        };
+
+        // f2(x) = 81x^3 + 7x^2 + 153x + 32
+        let f2 = Polynomial {
+            coefficients: vec![32u8.into(), 153u8.into(), 7u8.into(), 81u8.into()],
+        };
+
+        // r(x) = 7x^3 + 15x^2 + 81x + 2
+        let r = Polynomial {
+            coefficients: vec![2u8.into(), 81u8.into(), 15u8.into(), 7u8.into()],
+        };
+
+        let f1_at_5 = f1.evaluate(5);
+        let f2_at_5 = f2.evaluate(5);
+        let r_at_5 = r.evaluate(5);
+
+        assert_eq!(f1_at_5, Scalar::from(1838u16));
+        assert_eq!(f2_at_5, Scalar::from(11097u16));
+        assert_eq!(r_at_5, Scalar::from(1657u16));
+
+        let d1 = Scalar::from(127u8);
+        let d2 = Scalar::from(17u8);
+
+        // Proof step
+        let mut r_test_z1 = r.clone();
+        r_test_z1.compute_z(&[f1.clone()], &[d1]);
+
+        let z1_at_5 = r_test_z1.evaluate(5);
+        assert_eq!(z1_at_5, Scalar::from(235083u32));
+
+        let mut r_test_z2 = r.clone();
+        r_test_z2.compute_z(&[f1.clone(), f2.clone()], &[d1, d2]);
+
+        let z2_at_5 = r_test_z2.evaluate(5);
+        assert_eq!(z2_at_5, Scalar::from(423732u32));
+
+        // Verification step below
+
+        let potential_r_5_1 = Polynomial::compute_r_eval(&z1_at_5, &[f1_at_5], &[d1]);
+
+        let potential_r_5_2 = Polynomial::compute_r_eval(&z2_at_5, &[f1_at_5, f2_at_5], &[d1, d2]);
+
+        assert_eq!(potential_r_5_1, r_at_5);
+        assert_eq!(potential_r_5_2, r_at_5);
+    }
+
+    #[test]
+    fn test_thing_big() {
+        let mut rng = rand::rng();
+        let polynomials = Polynomial::sample_n(3, 10, &mut rng);
+
+        let (f1, f2, r) = (
+            polynomials[0].clone(),
+            polynomials[1].clone(),
+            polynomials[2].clone(),
+        );
+
+        let f1_at_5 = f1.evaluate(5);
+        let f2_at_5 = f2.evaluate(5);
+        let r_at_5 = r.evaluate(5);
+
+        let d1 = random_scalar(&mut rng);
+        let d2 = random_scalar(&mut rng);
+
+        // Proof step
+        let mut r_test_z1 = r.clone();
+        r_test_z1.compute_z(&[f1.clone()], &[d1]);
+
+        let z1_at_5 = r_test_z1.evaluate(5);
+
+        let mut r_test_z2 = r.clone();
+        r_test_z2.compute_z(&[f1.clone(), f2.clone()], &[d1, d2]);
+
+        let z2_at_5 = r_test_z2.evaluate(5);
+
+        // Verification step below
+
+        let potential_r_5_1 = Polynomial::compute_r_eval(&z1_at_5, &[f1_at_5], &[d1]);
+
+        let potential_r_5_2 = Polynomial::compute_r_eval(&z2_at_5, &[f1_at_5, f2_at_5], &[d1, d2]);
+
+        assert_eq!(potential_r_5_1, r_at_5);
+        assert_eq!(potential_r_5_2, r_at_5);
     }
 }

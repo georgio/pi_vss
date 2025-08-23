@@ -9,7 +9,7 @@ mod tests {
     use crate::{dealer::Dealer, party::generate_parties};
 
     use common::{
-        random::{random_point, random_scalar},
+        random::{random_point, random_scalars},
         utils::compute_lagrange_bases,
     };
 
@@ -17,6 +17,7 @@ mod tests {
     fn end_to_end() {
         const N: usize = 128;
         const T: usize = 63;
+        const K: usize = 3;
 
         let mut rng = rand::rng();
         let mut hasher = blake3::Hasher::new();
@@ -41,9 +42,10 @@ mod tests {
             party.ingest_public_keys(&public_keys).unwrap();
         }
 
-        let secret = random_scalar(&mut rng);
+        let secrets = random_scalars(&mut rng, K);
 
-        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+        let (shares, (c_vals, z)) =
+            dealer.deal_secrets_v2(&mut rng, &mut hasher, &mut buf, &secrets);
 
         for p in &mut parties {
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();
@@ -51,18 +53,15 @@ mod tests {
             p.ingest_share(&shares[p.index - 1]);
 
             assert!(
-                // for some reason this fails at n = 128
-                // but the call below works...
                 p.verify_share(&mut hasher, &mut buf).unwrap(),
                 "share verification failure"
             );
 
             p.ingest_shares(&shares).unwrap();
 
-            assert!(
-                p.verify_shares(&mut hasher, &mut buf).unwrap(),
-                "share verification failure"
-            );
+            let verif_result = p.verify_shares(&mut hasher, &mut buf).unwrap();
+
+            assert!(verif_result, "share verification failure");
 
             p.select_qualified_set(&mut rng).unwrap();
 
@@ -76,9 +75,9 @@ mod tests {
 
             let lagrange_bases = compute_lagrange_bases(&indices);
 
-            let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
+            let sec = p.reconstruct_secrets(&lagrange_bases).unwrap();
 
-            assert!(secret == sec, "Invalid Reconstructed Secret");
+            assert!(secrets == sec, "Invalid Reconstructed Secret");
         }
     }
 }
