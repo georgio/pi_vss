@@ -67,32 +67,6 @@ impl Dealer {
         let z = self.generate_proof(rng, hasher, buf, &mut c_buf, x_pows, f_polynomial, &f_evals);
 
         (f_evals, (c_buf, z))
-
-        // let (f, r) = Polynomial::sample_two_set_f0(self.t, secret, rng);
-        // self.secret = Some(*secret);
-
-        // let (f_evals, r_evals) = f.evaluate_two_range(&r, 1, self.public_keys.len());
-
-        // let c_vals: Vec<CompressedRistretto> = f_evals
-        //     .par_iter()
-        //     .zip(r_evals.par_iter())
-        //     .map(|(fi, ri)| (self.g1 * fi + self.g2 * ri).compress())
-        //     .collect();
-
-        // let flat_vec: Vec<u8> = c_vals.iter().flat_map(|x| x.to_bytes()).collect();
-
-        // hasher.update(&flat_vec);
-
-        // hasher.finalize_xof().fill(buf);
-
-        // let d = Scalar::from_bytes_mod_order_wide(buf);
-        // buf.zeroize();
-        // hasher.reset();
-
-        // let mut z = f.clone();
-        // z.mul_sum(&d, &r);
-
-        // (f_evals, (c_vals, z))
     }
 
     pub fn generate_shares<R>(
