@@ -9,6 +9,7 @@ mod tests {
     use crate::{dealer::Dealer, party::generate_parties};
 
     use common::{
+        precompute::gen_powers,
         random::{random_point, random_scalar},
         utils::compute_lagrange_bases,
     };
@@ -25,6 +26,8 @@ mod tests {
         let G: RistrettoPoint = random_point(&mut rng);
         let g1: RistrettoPoint = random_point(&mut rng);
         let g2: RistrettoPoint = random_point(&mut rng);
+
+        let xpows = gen_powers(N, T);
 
         let mut parties = generate_parties(&G, &g1, &g2, &mut rng, N, T);
 
@@ -45,21 +48,22 @@ mod tests {
 
         let secret = random_scalar(&mut rng);
 
-        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+        let (shares, (c_vals, z)) =
+            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
 
         for p in &mut parties {
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
             p.ingest_share(&shares[p.index - 1]);
             assert!(
-                p.verify_share(&mut hasher, &mut buf).unwrap(),
+                p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
                 "share verification failure"
             );
 
             p.ingest_shares(&shares).unwrap();
 
             assert!(
-                p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
                 "share verification failure"
             );
 

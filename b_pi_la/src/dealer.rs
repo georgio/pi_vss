@@ -1,7 +1,7 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
-    utils::{batch_decompress_ristretto_points, compute_d_powers_from_commitments},
+    utils::{batch_decompress_ristretto_points, compute_d_powers_from_hash_commitments},
 };
 use rand::{CryptoRng, RngCore};
 
@@ -129,7 +129,7 @@ impl Dealer {
             );
 
         // [d, d^2, ..., d^k]
-        let d_vals = compute_d_powers_from_commitments(hasher, buf, &c_buf, k);
+        let d_vals = compute_d_powers_from_hash_commitments(hasher, buf, &c_buf, k);
 
         // z == r += ( ∑ d_j * f_j )
         r.compute_z(f_polynomials, &d_vals);

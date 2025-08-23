@@ -440,7 +440,7 @@ fn VSS(c: &mut Criterion) {
                 p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
                 assert!(
-                    p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                    p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
                     "share verification failure"
                 );
             }
@@ -454,7 +454,7 @@ fn VSS(c: &mut Criterion) {
                     b.iter_batched(
                         || (blake3::Hasher::new(), [0u8; 64], parties[0].clone()),
                         |(mut hasher, mut buf, mut p0)| {
-                            assert!(p0.verify_shares(&mut hasher, &mut buf).unwrap())
+                            assert!(p0.verify_shares(&mut hasher, &mut buf, &xpows).unwrap())
                         },
                         BatchSize::PerIteration,
                     )
@@ -463,7 +463,7 @@ fn VSS(c: &mut Criterion) {
 
             for p in &mut parties {
                 assert!(
-                    p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                    p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
                     "share verification failure"
                 );
                 p.select_qualified_set(&mut rng).unwrap();

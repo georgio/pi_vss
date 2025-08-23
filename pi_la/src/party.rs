@@ -13,7 +13,7 @@ use common::{
     },
     polynomial::Polynomial,
     random::random_scalar,
-    utils::{batch_decompress_ristretto_points, compute_d_from_commitments},
+    utils::{batch_decompress_ristretto_points, compute_d_from_hash_commitments},
 };
 use rayon::prelude::*;
 
@@ -103,16 +103,25 @@ impl Party {
         }
     }
 
-    pub fn verify_share(&self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
+    pub fn verify_share(
+        &self,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
+    ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((c_vals, z)) => match &self.share {
                 Some(fi) => {
-                    let d = compute_d_from_commitments(hasher, buf, c_vals);
+                    let d = compute_d_from_hash_commitments(hasher, buf, c_vals);
 
                     hasher.update(fi.as_bytes());
                     hasher.update(
-                        Polynomial::compute_r_eval(&z.evaluate(self.index), &[*fi], &[d])
-                            .as_bytes(),
+                        Polynomial::compute_r_eval(
+                            &z.evaluate_precomp(x_pows, self.index),
+                            &[*fi],
+                            &[d],
+                        )
+                        .as_bytes(),
                     );
 
                     hasher.finalize_xof().fill(buf);
@@ -133,12 +142,13 @@ impl Party {
         &mut self,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((cvals, z)) => match &self.shares {
                 Some(shares) => {
-                    let d = compute_d_from_commitments(hasher, buf, cvals);
-                    let z_evals = z.evaluate_range(1, self.n);
+                    let d = compute_d_from_hash_commitments(hasher, buf, cvals);
+                    let z_evals = z.evaluate_range_precomp(x_pows, 1, self.n);
 
                     self.validated_shares = shares
                         .par_iter()

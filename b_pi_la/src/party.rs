@@ -13,7 +13,7 @@ use common::{
     },
     polynomial::Polynomial,
     random::random_scalar,
-    utils::{batch_decompress_ristretto_points, compute_d_powers_from_commitments},
+    utils::{batch_decompress_ristretto_points, compute_d_powers_from_hash_commitments},
 };
 use rayon::prelude::*;
 
@@ -101,17 +101,22 @@ impl Party {
         }
     }
 
-    pub fn verify_share(&mut self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
+    pub fn verify_share(
+        &mut self,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
+    ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((cvals, z)) => match &self.share {
                 Some(share) => {
                     let k = share.len();
 
-                    let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
+                    let d_vals = compute_d_powers_from_hash_commitments(hasher, buf, &cvals, k);
 
                     let mut l_hasher = Hasher::new();
 
-                    let z_eval = z.evaluate(self.index);
+                    let z_eval = z.evaluate_precomp(x_pows, self.index);
                     let r_val = Polynomial::compute_r_eval(&z_eval, &share, &d_vals);
 
                     share.iter().for_each(|fi_k| {
@@ -137,15 +142,16 @@ impl Party {
         &mut self,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((cvals, z)) => match &self.shares {
                 Some(shares) => {
                     let k = shares[0].len();
 
-                    let d_vals = compute_d_powers_from_commitments(hasher, buf, &cvals, k);
+                    let d_vals = compute_d_powers_from_hash_commitments(hasher, buf, &cvals, k);
 
-                    let z_evals = Polynomial::evaluate_range(&z, 1, self.n);
+                    let z_evals = z.evaluate_range_precomp(x_pows, 1, self.n);
 
                     self.validated_shares = (0..self.n)
                         .into_par_iter()

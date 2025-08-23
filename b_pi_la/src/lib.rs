@@ -57,13 +57,13 @@ mod tests {
             p.ingest_share(&shares[p.index - 1]);
 
             assert!(
-                p.verify_share(&mut hasher, &mut buf).unwrap(),
+                p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
                 "share verification failure"
             );
 
             p.ingest_shares(&shares).unwrap();
 
-            let verif_result = p.verify_shares(&mut hasher, &mut buf).unwrap();
+            let verif_result = p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap();
 
             assert!(verif_result, "share verification failure");
 

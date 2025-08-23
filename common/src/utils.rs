@@ -17,14 +17,15 @@ pub fn pointwise_op_in_place(
     });
 }
 
-pub fn compute_d_from_commitments(
+pub fn compute_d_from_hash_commitments(
     hasher: &mut Hasher,
     buf: &mut [u8; 64],
-    commitments: &Vec<[u8; 64]>,
+    commitments: &[[u8; 64]],
 ) -> Scalar {
-    let flat_vec: Vec<u8> = commitments.clone().into_iter().flatten().collect();
+    commitments.iter().for_each(|c| {
+        hasher.update(c);
+    });
 
-    hasher.update(flat_vec.as_slice());
     hasher.finalize_xof().fill(buf);
     hasher.reset();
 
@@ -33,13 +34,50 @@ pub fn compute_d_from_commitments(
     d
 }
 
-pub fn compute_d_powers_from_commitments(
+pub fn compute_d_from_point_commitments(
     hasher: &mut Hasher,
     buf: &mut [u8; 64],
-    commitments: &Vec<[u8; 64]>,
+    commitments: &[CompressedRistretto],
+) -> Scalar {
+    commitments.iter().for_each(|c| {
+        hasher.update(c.as_bytes());
+    });
+
+    hasher.finalize_xof().fill(buf);
+    hasher.reset();
+
+    let d = Scalar::from_bytes_mod_order_wide(buf);
+    buf.zeroize();
+    d
+}
+
+pub fn compute_d_powers_from_hash_commitments(
+    hasher: &mut Hasher,
+    buf: &mut [u8; 64],
+    commitments: &[[u8; 64]],
     k: usize,
 ) -> Vec<Scalar> {
-    let d = compute_d_from_commitments(hasher, buf, commitments);
+    let d = compute_d_from_hash_commitments(hasher, buf, commitments);
+
+    let mut d_vals: Vec<Scalar> = Vec::with_capacity(k);
+    // [d^1,
+    d_vals.push(d);
+
+    // d^2, d^3, ... d^k]
+    for i in 1..k {
+        d_vals.push(d_vals[i - 1] * d);
+    }
+    //
+    d_vals
+}
+
+pub fn compute_d_powers_from_point_commitments(
+    hasher: &mut Hasher,
+    buf: &mut [u8; 64],
+    commitments: &[CompressedRistretto],
+    k: usize,
+) -> Vec<Scalar> {
+    let d = compute_d_from_point_commitments(hasher, buf, commitments);
 
     let mut d_vals: Vec<Scalar> = Vec::with_capacity(k);
     // [d^1,

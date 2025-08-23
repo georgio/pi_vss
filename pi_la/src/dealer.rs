@@ -2,8 +2,8 @@ use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
     utils::{
-        batch_decompress_ristretto_points, compute_d_from_commitments,
-        compute_d_powers_from_commitments,
+        batch_decompress_ristretto_points, compute_d_from_hash_commitments,
+        compute_d_powers_from_hash_commitments,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -111,7 +111,7 @@ impl Dealer {
                 },
             );
 
-        let d = compute_d_from_commitments(hasher, buf, c_buf);
+        let d = compute_d_from_hash_commitments(hasher, buf, c_buf);
 
         // z == r +=  d * f
         r.compute_z(&[f_polynomial], &[d]);

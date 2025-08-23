@@ -1,7 +1,6 @@
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rand::{CryptoRng, RngCore, seq::SliceRandom};
-use zeroize::Zeroize;
 
 use common::{
     error::{
@@ -13,7 +12,7 @@ use common::{
     },
     polynomial::Polynomial,
     random::random_scalar,
-    utils::batch_decompress_ristretto_points,
+    utils::{batch_decompress_ristretto_points, compute_d_from_point_commitments},
 };
 use rayon::prelude::*;
 
@@ -121,24 +120,21 @@ impl Party {
         }
     }
 
-    pub fn verify_share(&self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
+    pub fn verify_share(
+        &self,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
+    ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((compressed_cvals, cvals, z)) => match &self.share {
-                Some(f_i) => {
-                    let flat_vec: Vec<u8> =
-                        compressed_cvals.iter().flat_map(|x| x.to_bytes()).collect();
-
-                    hasher.update(flat_vec.as_slice());
-
-                    hasher.finalize_xof().fill(buf);
-
-                    let d = Scalar::from_bytes_mod_order_wide(buf);
-                    hasher.reset();
-                    buf.zeroize();
+                Some(fi) => {
+                    let d = compute_d_from_point_commitments(hasher, buf, &compressed_cvals);
+                    let zi = z.evaluate_precomp(x_pows, self.index);
 
                     let expected_c = cvals[self.index - 1];
 
-                    let c = self.g1 * f_i + self.g2 * (z.evaluate(self.index) - d * f_i);
+                    let c = self.g1 * fi + self.g2 * Polynomial::compute_r_eval(&zi, &[*fi], &[d]);
 
                     Ok(expected_c == c)
                 }
@@ -152,26 +148,23 @@ impl Party {
         &mut self,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((compressed_cvals, cvals, z)) => match &self.shares {
                 Some(shares) => {
-                    let flat_vec: Vec<u8> =
-                        compressed_cvals.iter().flat_map(|x| x.to_bytes()).collect();
-
-                    hasher.update(flat_vec.as_slice());
-
-                    hasher.finalize_xof().fill(buf);
-
-                    let d = Scalar::from_bytes_mod_order_wide(buf);
-                    hasher.reset();
-                    buf.zeroize();
+                    let d = compute_d_from_point_commitments(hasher, buf, &compressed_cvals);
+                    let z_evals = z.evaluate_range_precomp(x_pows, 1, self.n);
 
                     self.validated_shares = shares
                         .par_iter()
+                        .zip(z_evals.par_iter())
                         .enumerate()
-                        .map(|(i, f_i)| {
-                            if cvals[i] == self.g1 * f_i + self.g2 * (z.evaluate(i + 1) - d * f_i) {
+                        .map(|(i, (fi, zi))| {
+                            if cvals[i]
+                                == self.g1 * fi
+                                    + self.g2 * Polynomial::compute_r_eval(zi, &[*fi], &[d])
+                            {
                                 Some(i)
                             } else {
                                 None

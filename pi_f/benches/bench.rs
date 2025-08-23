@@ -3,6 +3,7 @@ use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
 use pi_f::{dealer::Dealer, party::generate_parties};
 
 use common::{
+    precompute::gen_powers,
     random::{random_point, random_scalar},
     utils::compute_lagrange_bases,
 };
@@ -24,6 +25,8 @@ fn pvss(c: &mut Criterion) {
         let g1: RistrettoPoint = random_point(&mut rng);
         let g2: RistrettoPoint = random_point(&mut rng);
 
+        let xpows = gen_powers(n, t);
+
         let mut parties = generate_parties(&G, &g1, &g2, &mut rng, n, t);
 
         let public_keys: Vec<CompressedRistretto> =
@@ -43,7 +46,8 @@ fn pvss(c: &mut Criterion) {
 
         let secret = random_scalar(&mut rng);
 
-        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+        let (shares, (c_vals, z)) =
+            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
 
         c.bench_function(
             &format!("(n: {}, t: {}) | Pi_P PVSS | Dealer: Deal Secret", n, t),
@@ -51,7 +55,7 @@ fn pvss(c: &mut Criterion) {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
                     |(mut hasher, mut buf)| {
-                        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret)
+                        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret)
                     },
                     BatchSize::PerIteration,
                 )
@@ -63,7 +67,7 @@ fn pvss(c: &mut Criterion) {
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
             assert!(
-                p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
                 "share verification failure"
             );
         }
@@ -74,7 +78,11 @@ fn pvss(c: &mut Criterion) {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
                     |(mut hasher, mut buf)| {
-                        assert!(parties[0].verify_shares(&mut hasher, &mut buf).unwrap())
+                        assert!(
+                            parties[0]
+                                .verify_shares(&mut hasher, &mut buf, &xpows)
+                                .unwrap()
+                        )
                     },
                     BatchSize::PerIteration,
                 )

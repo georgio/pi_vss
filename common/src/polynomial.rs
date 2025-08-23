@@ -217,6 +217,14 @@ impl Polynomial {
             .collect()
     }
 
+    pub fn evaluate_precomp(&self, x_powers: &Vec<Vec<Scalar>>, x: usize) -> Scalar {
+        self.coefficients
+            .par_iter()
+            .zip(&x_powers[x])
+            .map(|(coef, x_pow)| coef * x_pow)
+            .sum()
+    }
+
     pub fn evaluate(&self, x: usize) -> Scalar {
         let mut x_powers: Vec<Scalar> = vec![Scalar::ONE, Scalar::from(x as u64)];
 

@@ -57,14 +57,14 @@ mod tests {
             assert!(
                 // for some reason this fails at n = 128
                 // but the call below works...
-                p.verify_share(&mut hasher, &mut buf).unwrap(),
+                p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
                 "share verification failure"
             );
 
             p.ingest_shares(&shares).unwrap();
 
             assert!(
-                p.verify_shares(&mut hasher, &mut buf).unwrap(),
+                p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
                 "share verification failure"
             );
 

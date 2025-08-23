@@ -45,14 +45,14 @@ fn main() {
 
         p.ingest_share(&shares[p.index - 1]);
         assert!(
-            p.verify_share(&mut hasher, &mut buf).unwrap(),
+            p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
             "share verification failure"
         );
 
         p.ingest_shares(&shares).unwrap();
 
         assert!(
-            p.verify_shares(&mut hasher, &mut buf).unwrap(),
+            p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
             "others share verification failure"
         );
 
