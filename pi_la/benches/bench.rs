@@ -3,6 +3,7 @@ use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
 use pi_la::{dealer::Dealer, party::generate_parties};
 
 use common::{
+    precompute::gen_powers,
     random::{random_point, random_scalar},
     utils::compute_lagrange_bases,
 };
@@ -23,6 +24,7 @@ fn pvss(c: &mut Criterion) {
         let mut buf: [u8; 64] = [0u8; 64];
 
         let G: RistrettoPoint = random_point(&mut rng);
+        let xpows = gen_powers(n, t);
 
         let mut parties = generate_parties(&G, &mut rng, n, t);
 
@@ -72,7 +74,7 @@ fn pvss(c: &mut Criterion) {
             |b| {
                 b.iter_batched(
                     || random_scalar(&mut rand::rng()),
-                    |secret| dealer.generate_shares(&mut rng, &secret),
+                    |secret| dealer.generate_shares(&mut rng, &xpows, &secret),
                     BatchSize::PerIteration,
                 )
             },
@@ -86,14 +88,17 @@ fn pvss(c: &mut Criterion) {
                         (
                             blake3::Hasher::new(),
                             [0u8; 64],
-                            dealer.generate_shares(&mut rand::rng(), &secret),
+                            vec![[0u8; 64]; dealer.public_keys.len()],
+                            dealer.generate_shares(&mut rand::rng(), &xpows, &secret),
                         )
                     },
-                    |(mut hasher, mut buf, (f_polynomial, f_evals))| {
+                    |(mut hasher, mut buf, mut c_buf, (f_polynomial, f_evals))| {
                         dealer.generate_proof(
                             &mut rng,
                             &mut hasher,
                             &mut buf,
+                            &mut c_buf,
+                            &xpows,
                             f_polynomial,
                             &f_evals,
                         );
@@ -109,7 +114,7 @@ fn pvss(c: &mut Criterion) {
         //     ),
         //     |b| {
         //         b.iter_batched(
-        //             || dealer.generate_shares(&mut rand::rng(), &secret),
+        //             || dealer.generate_shares(&mut rand::rng(), &xpows, &secret),
         //             |(f_polynomial, f_evals)| {
         //                 (0..1000).into_par_iter().for_each(|_| {
         //                     dealer.generate_proof(
@@ -132,7 +137,7 @@ fn pvss(c: &mut Criterion) {
         //     ),
         //     |b| {
         //         b.iter_batched(
-        //             || dealer.generate_shares(&mut rand::rng(), &secret),
+        //             || dealer.generate_shares(&mut rand::rng(), &xpows, &secret),
         //             |(f_polynomial, f_evals)| {
         //                 (0..10000).into_par_iter().for_each(|_| {
         //                     dealer.generate_proof(
@@ -149,7 +154,8 @@ fn pvss(c: &mut Criterion) {
         //     },
         // );
 
-        let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+        let (shares, (c_vals, z)) =
+            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
         for p in &mut parties {
             p.ingest_shares(&shares).unwrap();
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();

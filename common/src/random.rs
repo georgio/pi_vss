@@ -1,6 +1,6 @@
-use curve25519_dalek::{RistrettoPoint, Scalar, scalar};
+use curve25519_dalek::{RistrettoPoint, Scalar};
 use rand::*;
-use rayon::prelude::*;
+
 use zeroize::Zeroize;
 
 pub fn random_scalar<R>(rng: &mut R) -> Scalar

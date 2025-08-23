@@ -1,7 +1,10 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
-    utils::batch_decompress_ristretto_points,
+    utils::{
+        batch_decompress_ristretto_points, compute_d_from_commitments,
+        compute_d_powers_from_commitments,
+    },
 };
 use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
@@ -36,28 +39,45 @@ impl Dealer {
         self.t
     }
 
-    pub fn deal_secret_v2<R>(
+    pub fn get_pk0(&self) -> &RistrettoPoint {
+        &self.public_keys[0]
+    }
+
+    pub fn publish_f0(&self) -> Scalar {
+        self.secret.unwrap()
+    }
+
+    pub fn deal_secret<R>(
         &mut self,
         rng: &mut R,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
         secret: &Scalar,
-    ) -> (Vec<Scalar>, (Vec<Vec<u8>>, Polynomial))
+    ) -> (Vec<Scalar>, (Vec<[u8; 64]>, Polynomial))
     where
         R: CryptoRng + RngCore,
     {
-        let (f_polynomial, f_evals) = self.generate_shares(rng, secret);
-        let (c_vals, z) = self.generate_proof(rng, hasher, buf, f_polynomial, &f_evals);
+        let (f_polynomial, f_evals) = self.generate_shares(rng, x_pows, secret);
 
-        (f_evals, (c_vals, z))
+        let mut c_buf = vec![[0u8; 64]; self.public_keys.len()];
+
+        let z = self.generate_proof(rng, hasher, buf, &mut c_buf, x_pows, f_polynomial, &f_evals);
+
+        (f_evals, (c_buf, z))
     }
 
-    pub fn generate_shares<R>(&self, rng: &mut R, secret: &Scalar) -> (Polynomial, Vec<Scalar>)
+    pub fn generate_shares<R>(
+        &self,
+        rng: &mut R,
+        x_pows: &Vec<Vec<Scalar>>,
+        secret: &Scalar,
+    ) -> (Polynomial, Vec<Scalar>)
     where
         R: CryptoRng,
     {
         let f_polynomial = Polynomial::sample_set_f0(self.t, rng, secret);
-        let f_evals = f_polynomial.evaluate_range(1, self.public_keys.len());
+        let f_evals = f_polynomial.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
         (f_polynomial, f_evals)
     }
 
@@ -66,101 +86,36 @@ impl Dealer {
         rng: &mut R,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
-        mut f_polynomial: Polynomial,
+        c_buf: &mut Vec<[u8; 64]>,
+        x_pows: &Vec<Vec<Scalar>>,
+        f_polynomial: Polynomial,
         f_evals: &Vec<Scalar>,
-    ) -> (Vec<Vec<u8>>, Polynomial)
+    ) -> Polynomial
     where
         R: CryptoRng,
     {
         let mut r = Polynomial::sample(self.t, rng);
-        let r_evals = r.evaluate_range(1, self.public_keys.len());
+        let r_evals = r.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
 
-        let c_vals: Vec<Vec<u8>> = f_evals
-            .par_iter()
-            .zip(r_evals.par_iter())
-            .map_init(
-                || (Hasher::new(), vec![0u8; 64]),
-                |(l_hasher, l_buf), (fi, ri)| {
+        c_buf
+            .par_iter_mut()
+            .zip(f_evals.par_iter().zip(r_evals.par_iter()))
+            .for_each_init(
+                || Hasher::new(),
+                |l_hasher, (l_buf, (fi, ri))| {
                     l_hasher.update(fi.as_bytes());
-
                     l_hasher.update(ri.as_bytes());
+
                     l_hasher.finalize_xof().fill(l_buf);
                     l_hasher.reset();
-
-                    let out = l_buf.clone();
-                    l_buf.zeroize();
-                    out
                 },
-            )
-            .collect();
+            );
 
-        let flat_vec: Vec<u8> = c_vals.clone().into_iter().flatten().collect();
+        let d = compute_d_from_commitments(hasher, buf, c_buf);
 
-        hasher.update(&flat_vec);
-        hasher.finalize_xof().fill(buf);
+        // z == r +=  d * f
+        r.compute_z(&[f_polynomial], &[d]);
 
-        let d = Scalar::from_bytes_mod_order_wide(buf);
-        buf.zeroize();
-        hasher.reset();
-
-        f_polynomial.mul_sum(&d, &r);
-
-        (c_vals, f_polynomial)
-    }
-
-    pub fn deal_secret<R>(
-        &mut self,
-        rng: &mut R,
-        hasher: &mut Hasher,
-        buf: &mut [u8; 64],
-        secret: &Scalar,
-    ) -> (Vec<Scalar>, (Vec<[u8; 64]>, Polynomial))
-    where
-        R: CryptoRng + RngCore,
-    {
-        let (mut f, r) = Polynomial::sample_two_set_f0(self.t, secret, rng);
-        self.secret = Some(*secret);
-
-        let (f_evals, r_evals) = f.evaluate_two_range(&r, 1, self.public_keys.len());
-
-        let c_vals: Vec<[u8; 64]> = f_evals
-            .par_iter()
-            .zip(r_evals.par_iter())
-            .map_init(
-                || (Hasher::new(), [0u8; 64]),
-                |(l_hasher, l_buf), (fi, ri)| {
-                    l_hasher.update(fi.as_bytes());
-
-                    l_hasher.update(ri.as_bytes());
-                    l_hasher.finalize_xof().fill(l_buf);
-                    l_hasher.reset();
-
-                    let out = l_buf.clone();
-                    l_buf.zeroize();
-                    out
-                },
-            )
-            .collect();
-
-        let flat_vec: Vec<u8> = c_vals.clone().into_iter().flatten().collect();
-
-        hasher.update(&flat_vec);
-        hasher.finalize_xof().fill(buf);
-
-        let d = Scalar::from_bytes_mod_order_wide(buf);
-        buf.zeroize();
-        hasher.reset();
-
-        f.mul_sum(&d, &r);
-
-        (f_evals, (c_vals, f))
-    }
-
-    pub fn get_pk0(&self) -> &RistrettoPoint {
-        &self.public_keys[0]
-    }
-
-    pub fn publish_f0(&self) -> Scalar {
-        self.secret.unwrap()
+        r
     }
 }
