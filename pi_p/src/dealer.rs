@@ -1,16 +1,14 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
-    random::random_scalar,
-    utils::batch_decompress_ristretto_points,
+    random::random_scalars,
+    utils::{batch_decompress_ristretto_points, compute_d_from_point_commitments},
 };
 use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-
-use zeroize::Zeroize;
 
 pub struct Dealer {
     pub t: usize,
@@ -55,46 +53,70 @@ impl Dealer {
         rng: &mut R,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
         secret: &Scalar,
     ) -> (
-        (Vec<Scalar>, Vec<Scalar>),
-        (Vec<CompressedRistretto>, Polynomial),
+        Vec<Scalar>,
+        (Vec<Scalar>, Vec<CompressedRistretto>, Polynomial),
     )
     where
         R: CryptoRng + RngCore,
     {
-        let (f, r) = Polynomial::sample_two_set_f0(self.t, secret, rng);
-        self.secret = Some(*secret);
+        let (f_polynomial, f_evals) = self.generate_shares(rng, x_pows, secret);
 
-        // Step 3
-        let mut g: Vec<Scalar> = vec![Scalar::ZERO; self.public_keys.len()];
-        g.iter_mut().for_each(|g_val| *g_val = random_scalar(rng));
+        let mut c_buf: Vec<CompressedRistretto> = Vec::with_capacity(self.public_keys.len());
 
-        let (f_evals, r_evals) = f.evaluate_two_range(&r, 1, self.public_keys.len());
+        let (g, z) =
+            self.generate_proof(rng, hasher, buf, &mut c_buf, x_pows, f_polynomial, &f_evals);
+        (f_evals, (g, c_buf, z))
+    }
 
-        let c_vals: Vec<CompressedRistretto> = f_evals
+    pub fn generate_shares<R>(
+        &self,
+        rng: &mut R,
+        x_pows: &Vec<Vec<Scalar>>,
+        secret: &Scalar,
+    ) -> (Polynomial, Vec<Scalar>)
+    where
+        R: CryptoRng,
+    {
+        let f_polynomial = Polynomial::sample_set_f0(self.t, rng, secret);
+        let f_evals = f_polynomial.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
+        (f_polynomial, f_evals)
+    }
+
+    pub fn generate_proof<R>(
+        &self,
+        rng: &mut R,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+        c_buf: &mut Vec<CompressedRistretto>,
+        x_pows: &Vec<Vec<Scalar>>,
+        f_polynomial: Polynomial,
+        f_evals: &Vec<Scalar>,
+    ) -> (Vec<Scalar>, Polynomial)
+    where
+        R: CryptoRng,
+    {
+        let mut r = Polynomial::sample(self.t, rng);
+        let r_evals = r.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
+
+        let g: Vec<Scalar> = random_scalars(rng, self.public_keys.len());
+
+        f_evals
             .par_iter()
             .zip(r_evals.par_iter().zip(g.par_iter()))
             .map(|(fi, (ri, gi))| (self.g1 * fi + self.g2 * ri + self.g3 * gi).compress())
-            .collect();
+            .collect_into_vec(c_buf);
 
-        let flat_vec: Vec<u8> = c_vals.iter().flat_map(|x| x.to_bytes()).collect();
+        let d = compute_d_from_point_commitments(hasher, buf, &c_buf);
 
-        hasher.update(&flat_vec);
-
-        hasher.finalize_xof().fill(buf);
-
-        let d = Scalar::from_bytes_mod_order_wide(buf);
-        buf.zeroize();
-        hasher.reset();
-
+        // z == r +=  d * f
         if self.g1 == self.g2 * d {
             panic!("g1 == g2^d");
         } else {
-            let mut z = f.clone();
-            z.mul_sum(&d, &r);
-
-            ((f_evals, g), (c_vals, z))
+            r.compute_z(&[f_polynomial], &[d]);
+            (g, r)
         }
     }
 

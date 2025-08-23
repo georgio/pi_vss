@@ -13,7 +13,7 @@ use common::{
     },
     polynomial::Polynomial,
     random::random_scalar,
-    utils::batch_decompress_ristretto_points,
+    utils::{batch_decompress_ristretto_points, compute_d_from_point_commitments},
 };
 use rayon::prelude::*;
 
@@ -30,7 +30,7 @@ pub struct Party {
     pub public_keys: Option<Vec<RistrettoPoint>>,
     pub dealer_proof: Option<(Vec<CompressedRistretto>, Vec<RistrettoPoint>, Polynomial)>,
     pub validated_shares: Vec<usize>,
-    // (f_i, gamma_i)
+    // (fi, gamma_i)
     pub share: Option<(Scalar, Scalar)>,
     pub d: Option<Scalar>,
     pub shares: Option<Vec<(Scalar, Scalar)>>,
@@ -125,26 +125,23 @@ impl Party {
         }
     }
 
-    pub fn verify_share(&self, hasher: &mut Hasher, buf: &mut [u8; 64]) -> Result<bool, Error> {
+    pub fn verify_share(
+        &self,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
+    ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((compressed_cvals, cvals, z)) => match &self.share {
-                Some((f_i, g_i)) => {
-                    let flat_vec: Vec<u8> =
-                        compressed_cvals.iter().flat_map(|x| x.to_bytes()).collect();
-
-                    hasher.update(flat_vec.as_slice());
-
-                    hasher.finalize_xof().fill(buf);
-
-                    let d = Scalar::from_bytes_mod_order_wide(buf);
-                    hasher.reset();
-                    buf.zeroize();
+                Some((fi, gi)) => {
+                    let d = compute_d_from_point_commitments(hasher, buf, &compressed_cvals);
+                    let zi = z.evaluate_precomp(x_pows, self.index);
 
                     let expected_c = cvals[self.index - 1];
 
-                    let c = self.g1 * f_i
-                        + self.g2 * (z.evaluate(self.index) - d * f_i)
-                        + self.g3 * g_i;
+                    let c = self.g1 * fi
+                        + self.g2 * Polynomial::compute_r_eval(&zi, &[*fi], &[d])
+                        + self.g3 * gi;
 
                     Ok(expected_c == c)
                 }
@@ -158,29 +155,23 @@ impl Party {
         &mut self,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((compressed_cvals, cvals, z)) => match &self.shares {
                 Some(shares) => {
-                    let flat_vec: Vec<u8> =
-                        compressed_cvals.iter().flat_map(|x| x.to_bytes()).collect();
-
-                    hasher.update(flat_vec.as_slice());
-
-                    hasher.finalize_xof().fill(buf);
-
-                    let d = Scalar::from_bytes_mod_order_wide(buf);
-                    hasher.reset();
-                    buf.zeroize();
+                    let d = compute_d_from_point_commitments(hasher, buf, &compressed_cvals);
+                    let z_evals = z.evaluate_range_precomp(x_pows, 1, self.n);
 
                     self.validated_shares = shares
                         .par_iter()
+                        .zip(z_evals.par_iter())
                         .enumerate()
-                        .map(|(i, (f_i, g_i))| {
+                        .map(|(i, ((fi, gi), zi))| {
                             if cvals[i]
-                                == self.g1 * f_i
-                                    + self.g2 * (z.evaluate(i + 1) - d * f_i)
-                                    + self.g3 * g_i
+                                == self.g1 * fi
+                                    + self.g2 * Polynomial::compute_r_eval(zi, &[*fi], &[d])
+                                    + self.g3 * gi
                             {
                                 Some(i)
                             } else {
@@ -198,7 +189,7 @@ impl Party {
         }
     }
 
-    pub fn ingest_shares(&mut self, shares: &(Vec<Scalar>, Vec<Scalar>)) -> Result<(), Error> {
+    pub fn ingest_shares(&mut self, shares: (&Vec<Scalar>, &Vec<Scalar>)) -> Result<(), Error> {
         if shares.0.len() == self.n && shares.1.len() == self.n {
             self.shares = Some(
                 shares

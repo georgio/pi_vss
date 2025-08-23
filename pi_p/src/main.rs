@@ -1,4 +1,5 @@
 use common::{
+    precompute::gen_powers,
     random::{random_point, random_scalar},
     utils::compute_lagrange_bases,
 };
@@ -17,6 +18,8 @@ fn main() {
     let g1: RistrettoPoint = random_point(&mut rng);
     let g2: RistrettoPoint = random_point(&mut rng);
     let g3: RistrettoPoint = random_point(&mut rng);
+
+    let xpows = gen_powers(N, T);
 
     let mut parties = generate_parties(&G, &g1, &g2, &g3, &mut rng, N, T);
 
@@ -37,21 +40,22 @@ fn main() {
 
     let secret = random_scalar(&mut rng);
 
-    let (shares, (c_vals, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+    let (shares, (g, c_vals, z)) =
+        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
 
     for p in &mut parties {
         p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
-        p.ingest_share((&shares.0[p.index - 1], &shares.1[p.index - 1]));
+        p.ingest_share((&shares[p.index - 1], &g[p.index - 1]));
         assert!(
-            p.verify_share(&mut hasher, &mut buf).unwrap(),
+            p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
             "share verification failure"
         );
 
-        p.ingest_shares(&shares).unwrap();
+        p.ingest_shares((&shares, &g)).unwrap();
 
         assert!(
-            p.verify_shares(&mut hasher, &mut buf).unwrap(),
+            p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
             "others share verification failure"
         );
 
