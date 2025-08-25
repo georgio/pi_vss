@@ -7,7 +7,7 @@ mod tests {
 
     use crate::{dealer::Dealer, party::generate_parties};
 
-    use common::utils::compute_lagrange_bases;
+    use common::{precompute::gen_powers, utils::compute_lagrange_bases};
 
     #[test]
     fn end_to_end() {
@@ -19,6 +19,7 @@ mod tests {
         let mut buf = [0u8; 64];
 
         let G: RistrettoPoint = RistrettoPoint::mul_base(&common::random::random_scalar(&mut rng));
+        let xpows = gen_powers(N, T);
 
         let mut parties = generate_parties(&G, &mut rng, N, T);
 
@@ -42,7 +43,7 @@ mod tests {
 
         let secret = common::random::random_scalar(&mut rng);
         let (encrypted_shares, (d, z)) =
-            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
 
         for p in &mut parties {
             p.ingest_encrypted_shares(&encrypted_shares).unwrap();

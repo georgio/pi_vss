@@ -37,18 +37,69 @@ impl Dealer {
         rng: &mut R,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
         secret: &Scalar,
     ) -> (Vec<CompressedRistretto>, (Scalar, Polynomial))
     where
         R: CryptoRng + RngCore,
     {
-        let (mut z, r) = Polynomial::sample_two_set_f0(self.t, secret, rng);
         self.secret = Some(*secret);
+        let (f_polynomial, f_evals) = self.generate_shares(rng, x_pows, secret);
 
-        let (encrypted_shares, r_vals) = z.evaluate_multiply_two(&r, &self.public_keys);
-        encrypted_shares.iter().chain(r_vals.iter()).for_each(|x| {
-            hasher.update(x.as_bytes());
-        });
+        let (d, z) = self.generate_proof(rng, hasher, buf, x_pows, f_polynomial, &f_evals);
+
+        (f_evals, (d, z))
+    }
+
+    pub fn generate_shares<R>(
+        &self,
+        rng: &mut R,
+        x_pows: &Vec<Vec<Scalar>>,
+        secret: &Scalar,
+    ) -> (Polynomial, Vec<CompressedRistretto>)
+    where
+        R: CryptoRng,
+    {
+        let f_polynomial = Polynomial::sample_set_f0(self.t, rng, secret);
+
+        let f_evals = f_polynomial.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
+
+        let encrypted_shares = f_evals
+            .par_iter()
+            .zip(self.public_keys.par_iter())
+            .map(|(f_eval, pub_key)| (f_eval * pub_key).compress())
+            .collect();
+
+        (f_polynomial, encrypted_shares)
+    }
+
+    pub fn generate_proof<R>(
+        &self,
+        rng: &mut R,
+        hasher: &mut Hasher,
+        buf: &mut [u8; 64],
+        x_pows: &Vec<Vec<Scalar>>,
+        f_polynomial: Polynomial,
+        f_evals: &Vec<CompressedRistretto>,
+    ) -> (Scalar, Polynomial)
+    where
+        R: CryptoRng,
+    {
+        let mut r = Polynomial::sample(self.t, rng);
+        let r_evals = r.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
+
+        let encrypted_r_evals: Vec<CompressedRistretto> = r_evals
+            .par_iter()
+            .zip(self.public_keys.par_iter())
+            .map(|(f_eval, pub_key)| (f_eval * pub_key).compress())
+            .collect();
+
+        f_evals
+            .iter()
+            .chain(encrypted_r_evals.iter())
+            .for_each(|x| {
+                hasher.update(x.as_bytes());
+            });
 
         hasher.finalize_xof().fill(buf);
 
@@ -57,8 +108,8 @@ impl Dealer {
         hasher.reset();
         buf.zeroize();
 
-        z.mul_sum(&d, &r);
+        r.compute_z(&[f_polynomial], &[d]);
 
-        (encrypted_shares, (d, z))
+        (d, r)
     }
 }

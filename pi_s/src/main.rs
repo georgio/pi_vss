@@ -1,4 +1,5 @@
 use common::{
+    precompute::gen_powers,
     random::random_scalar,
     utils::{compute_lagrange_bases, precompute_lambda},
 };
@@ -15,6 +16,8 @@ fn main() {
     let mut buf = [0u8; 64];
 
     let G: RistrettoPoint = RistrettoPoint::mul_base(&random_scalar(&mut rng));
+
+    let xpows = gen_powers(N, T);
 
     let lambdas = precompute_lambda(N, T);
 
@@ -38,7 +41,8 @@ fn main() {
         party.ingest_public_keys(&public_keys).unwrap();
     }
     let secret = random_scalar(&mut rng);
-    let (encrypted_shares, (d, z)) = dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+    let (encrypted_shares, (d, z)) =
+        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
 
     for p in &mut parties {
         p.ingest_encrypted_shares(&encrypted_shares).unwrap();
