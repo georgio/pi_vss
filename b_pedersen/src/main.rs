@@ -1,31 +1,30 @@
+use b_pedersen::{dealer::Dealer, party::generate_parties};
 use common::{
     precompute::gen_powers,
-    random::{random_point, random_scalar},
+    random::{random_point, random_points, random_scalars},
     utils::compute_lagrange_bases,
 };
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
-use pi_f::{dealer::Dealer, party::generate_parties};
 
 fn main() {
     const N: usize = 128;
     const T: usize = 63;
+    const K: usize = 3;
 
     let mut rng = rand::rng();
-    let mut hasher = blake3::Hasher::new();
-    let mut buf = [0u8; 64];
 
-    let g: RistrettoPoint = random_point(&mut rng);
-    let g1: RistrettoPoint = random_point(&mut rng);
-    let g2: RistrettoPoint = random_point(&mut rng);
+    let generator: RistrettoPoint = random_point(&mut rng);
+    let g: Vec<RistrettoPoint> = random_points(&mut rng, K);
+    let g0: RistrettoPoint = random_point(&mut rng);
 
     let xpows = gen_powers(N, T);
 
-    let mut parties = generate_parties(&g, &g1, &g2, &mut rng, N, T);
+    let mut parties = generate_parties(&generator, &g, &g0, &mut rng, N, T);
 
     let public_keys: Vec<CompressedRistretto> =
         parties.iter().map(|party| party.public_key.0).collect();
 
-    let mut dealer = Dealer::new(g1, g2, N, T, &public_keys).unwrap();
+    let mut dealer = Dealer::new(g, g0, N, T, &public_keys).unwrap();
 
     for party in &mut parties {
         let public_keys: Vec<CompressedRistretto> = public_keys
@@ -37,24 +36,20 @@ fn main() {
         party.ingest_public_keys(&public_keys).unwrap();
     }
 
-    let secret = random_scalar(&mut rng);
+    let secrets = random_scalars(&mut rng, K);
 
-    let (shares, (c_vals, z)) =
-        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
+    let (shares, (r_evals, c_vals)) = dealer.deal_secret(&mut rng, &xpows, &secrets);
 
     for p in &mut parties {
-        p.ingest_dealer_proof((&c_vals, &z)).unwrap();
+        p.ingest_dealer_proof(&c_vals).unwrap();
 
-        p.ingest_share(&shares[p.index - 1]);
-        assert!(
-            p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
-            "share verification failure"
-        );
+        p.ingest_share((&shares[p.index - 1], &r_evals[p.index - 1]));
+        assert!(p.verify_share().unwrap(), "share verification failure");
 
-        p.ingest_shares(&shares).unwrap();
+        p.ingest_shares((&shares, &r_evals)).unwrap();
 
         assert!(
-            p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
+            p.verify_shares().unwrap(),
             "others share verification failure"
         );
 
@@ -70,8 +65,8 @@ fn main() {
 
         let lagrange_bases = compute_lagrange_bases(&indices);
 
-        let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
+        let sec = p.reconstruct_secrets(&lagrange_bases).unwrap();
 
-        assert!(secret == sec, "Invalid Reconstructed Secret");
+        assert!(secrets == sec, "Invalid Reconstructed Secret");
     }
 }

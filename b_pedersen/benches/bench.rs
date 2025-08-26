@@ -1,4 +1,4 @@
-use b_pi_f::{dealer::Dealer, party::generate_parties};
+use b_pedersen::{dealer::Dealer, party::generate_parties};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
 
@@ -19,21 +19,20 @@ fn pvss(c: &mut Criterion) {
             (2048, 1023),
         ] {
             let mut rng = rand::rng();
-            let mut hasher = blake3::Hasher::new();
-            let mut buf: [u8; 64] = [0u8; 64];
 
-            let generator: RistrettoPoint = random_point(&mut rng);
+            let G: RistrettoPoint = random_point(&mut rng);
             let g: Vec<RistrettoPoint> = random_points(&mut rng, k);
-            let g0: RistrettoPoint = random_point(&mut rng);
+            let g2: RistrettoPoint = random_point(&mut rng);
+            let g3: RistrettoPoint = random_point(&mut rng);
 
             let xpows = gen_powers(n, t);
 
-            let mut parties = generate_parties(&generator, &g, &g0, &mut rng, n, t);
+            let mut parties = generate_parties(&G, &g, &g2, &mut rng, n, t);
 
             let public_keys: Vec<CompressedRistretto> =
                 parties.iter().map(|party| party.public_key.0).collect();
 
-            let mut dealer = Dealer::new(g, g0, n, t, &public_keys).unwrap();
+            let mut dealer = Dealer::new(g, g2, n, t, &public_keys).unwrap();
 
             for party in &mut parties {
                 let public_keys: Vec<CompressedRistretto> = public_keys
@@ -47,47 +46,26 @@ fn pvss(c: &mut Criterion) {
 
             let secrets = random_scalars(&mut rng, k);
 
-            let (shares, (c_vals, z)) =
-                dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secrets);
+            let (shares, (g, c_vals, z)) = dealer.deal_secret(&mut rng, &xpows, &secrets);
 
             c.bench_function(
                 &format!("(n: {}, t: {}) | Pi_P PVSS | Dealer: Deal Secret", n, t),
-                |b| {
-                    b.iter_batched(
-                        || (blake3::Hasher::new(), [0u8; 64]),
-                        |(mut hasher, mut buf)| {
-                            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secrets)
-                        },
-                        BatchSize::PerIteration,
-                    )
-                },
+                |b| b.iter(|| dealer.deal_secret(&mut rng, &xpows, &secrets)),
             );
 
             for p in &mut parties {
-                p.ingest_shares(&shares).unwrap();
+                p.ingest_shares((&shares, &g)).unwrap();
                 p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
                 assert!(
-                    p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
+                    p.verify_shares(&xpows).unwrap(),
                     "share verification failure"
                 );
             }
 
             c.bench_function(
                 &format!("(n: {}, t: {}) | Pi_P PVSS | Party: Verify Shares", n, t),
-                |b| {
-                    b.iter_batched(
-                        || (blake3::Hasher::new(), [0u8; 64]),
-                        |(mut hasher, mut buf)| {
-                            assert!(
-                                parties[0]
-                                    .verify_shares(&mut hasher, &mut buf, &xpows)
-                                    .unwrap()
-                            )
-                        },
-                        BatchSize::PerIteration,
-                    )
-                },
+                |b| b.iter(|| assert!(parties[0].verify_shares(&xpows).unwrap())),
             );
 
             for p in &mut parties {

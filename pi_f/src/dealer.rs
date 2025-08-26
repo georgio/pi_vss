@@ -1,18 +1,13 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
-    utils::{
-        batch_decompress_ristretto_points, compute_d_from_hash_commitments,
-        compute_d_from_point_commitments,
-    },
+    utils::{batch_decompress_ristretto_points, compute_d_from_point_commitments},
 };
 use rand::{CryptoRng, RngCore};
 use rayon::prelude::*;
 
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
-
-use zeroize::Zeroize;
 
 pub struct Dealer {
     pub t: usize,

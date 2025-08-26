@@ -15,19 +15,18 @@ fn main() {
     let mut hasher = blake3::Hasher::new();
     let mut buf = [0u8; 64];
 
-    let G: RistrettoPoint = random_point(&mut rng);
+    let generator: RistrettoPoint = random_point(&mut rng);
     let g: Vec<RistrettoPoint> = random_points(&mut rng, K);
-    let g2: RistrettoPoint = random_point(&mut rng);
-    let g3: RistrettoPoint = random_point(&mut rng);
+    let g0: RistrettoPoint = random_point(&mut rng);
 
     let xpows = gen_powers(N, T);
 
-    let mut parties = generate_parties(&G, &g, &g2, &mut rng, N, T);
+    let mut parties = generate_parties(&generator, &g, &g0, &mut rng, N, T);
 
     let public_keys: Vec<CompressedRistretto> =
         parties.iter().map(|party| party.public_key.0).collect();
 
-    let mut dealer = Dealer::new(g, g2, N, T, &public_keys).unwrap();
+    let mut dealer = Dealer::new(g, g0, N, T, &public_keys).unwrap();
 
     for party in &mut parties {
         let public_keys: Vec<CompressedRistretto> = public_keys

@@ -13,7 +13,7 @@ pub struct Dealer {
     pub t: usize,
     // [g1...gk]
     pub g: Vec<RistrettoPoint>,
-    pub g2: RistrettoPoint,
+    pub g0: RistrettoPoint,
     pub public_keys: Vec<RistrettoPoint>,
     pub(crate) secret: Option<Scalar>,
 }
@@ -21,7 +21,7 @@ pub struct Dealer {
 impl Dealer {
     pub fn new(
         g: Vec<RistrettoPoint>,
-        g2: RistrettoPoint,
+        g0: RistrettoPoint,
         n: usize,
         t: usize,
         public_keys: &[CompressedRistretto],
@@ -35,7 +35,7 @@ impl Dealer {
                 public_keys: pks,
                 secret: None,
                 g: g.clone(),
-                g2: g2.clone(),
+                g0: g0.clone(),
             }),
             Err(x) => Err(x),
         }
@@ -116,7 +116,7 @@ impl Dealer {
                     .zip(self.g.par_iter())
                     .map(|(fi_k, gk)| fi_k * gk)
                     .reduce(|| RistrettoPoint::identity(), |acc, prod| acc + prod)
-                    + self.g2 * ri)
+                    + self.g0 * ri)
                     .compress()
             })
             .collect_into_vec(c_buf);
@@ -125,8 +125,8 @@ impl Dealer {
         let d_vals = compute_d_powers_from_point_commitments(hasher, buf, &c_buf, k);
 
         // z == r +=  d * f
-        // if self.g1 == self.g2 * d {
-        //     panic!("g1 == g2^d");
+        // if self.g1 == self.g0 * d {
+        //     panic!("g1 == g0^d");
         // } else {
         r.compute_z(f_polynomials, &d_vals);
         r

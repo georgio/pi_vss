@@ -59,16 +59,7 @@ pub fn compute_d_powers_from_hash_commitments(
 ) -> Vec<Scalar> {
     let d = compute_d_from_hash_commitments(hasher, buf, commitments);
 
-    let mut d_vals: Vec<Scalar> = Vec::with_capacity(k);
-    // [d^1,
-    d_vals.push(d);
-
-    // d^2, d^3, ... d^k]
-    for i in 1..k {
-        d_vals.push(d_vals[i - 1] * d);
-    }
-    //
-    d_vals
+    compute_d_powers(k, &d)
 }
 
 pub fn compute_d_powers_from_point_commitments(
@@ -79,9 +70,13 @@ pub fn compute_d_powers_from_point_commitments(
 ) -> Vec<Scalar> {
     let d = compute_d_from_point_commitments(hasher, buf, commitments);
 
+    compute_d_powers(k, &d)
+}
+
+pub fn compute_d_powers(k: usize, d: &Scalar) -> Vec<Scalar> {
     let mut d_vals: Vec<Scalar> = Vec::with_capacity(k);
     // [d^1,
-    d_vals.push(d);
+    d_vals.push(*d);
 
     // d^2, d^3, ... d^k]
     for i in 1..k {
@@ -149,5 +144,14 @@ pub fn batch_decompress_ristretto_points(
     compressed_points
         .par_iter()
         .map(|compressed_point| decompress_ristretto_point(*compressed_point))
+        .collect()
+}
+pub fn batch_decompress_batched_ristretto_points(
+    // vec[vec[_;k]; n]
+    batch_compressed_points: &Vec<Vec<CompressedRistretto>>,
+) -> Result<Vec<Vec<RistrettoPoint>>, Error> {
+    batch_compressed_points
+        .par_iter()
+        .map(|compressed_points| batch_decompress_ristretto_points(compressed_points))
         .collect()
 }

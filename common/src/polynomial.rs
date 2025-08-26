@@ -79,10 +79,7 @@ impl Polynomial {
         )
     }
 
-    pub fn sample_n<R>(n: usize, degree: usize, rng: &mut R) -> Vec<Self>
-    where
-        R: CryptoRng + RngCore,
-    {
+    pub fn sample_n(n: usize, degree: usize) -> Vec<Self> {
         (0..n)
             .into_par_iter()
             .map_init(|| rand::rng(), |mut rng, _| Self::sample(degree, &mut rng))
@@ -566,7 +563,7 @@ mod test {
     #[test]
     fn test_thing_big() {
         let mut rng = rand::rng();
-        let polynomials = Polynomial::sample_n(3, 10, &mut rng);
+        let polynomials = Polynomial::sample_n(3, 10);
 
         let (f1, f2, r) = (
             polynomials[0].clone(),

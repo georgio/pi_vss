@@ -1,9 +1,9 @@
-// use b_pi_la::{dealer::Dealer, party::generate_parties};
+// use b_pi_s::{dealer::Dealer, party::generate_parties};
 // use common::{
 //     random::{random_point, random_scalars},
 //     utils::compute_lagrange_bases,
 // };
-// use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
+// use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint};
 
 // use rayon::prelude::*;
 

@@ -20,11 +20,11 @@ fn add_mul(c: &mut Criterion) {
 }
 
 fn sample_bench(c: &mut Criterion) {
-    let n = 64;
+    // let n = 64;
     let t = 31;
     let k = 10000;
 
-    let mut polynomials = Polynomial::sample_n(k, t, &mut rand::rng());
+    // let polynomials = Polynomial::sample_n(k, t);
 
     let f0_vals = random_scalars(&mut rand::rng(), k);
 
@@ -99,7 +99,7 @@ fn eval_bench(c: &mut Criterion) {
     let t = 31;
     let k = 10000;
 
-    let polynomials = Polynomial::sample_n(k, t, &mut rand::rng());
+    let polynomials = Polynomial::sample_n(k, t);
     c.bench_function(&format!("evaluation_precomp: t = {}", t), |b| {
         b.iter(|| {
             (1..=n)

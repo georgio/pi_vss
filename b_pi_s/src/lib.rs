@@ -4,7 +4,7 @@ pub mod party;
 #[cfg(test)]
 
 mod tests {
-    use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
+    use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 
     use crate::{dealer::Dealer, party::generate_parties};
 
@@ -13,11 +13,12 @@ mod tests {
         random::{random_point, random_scalars},
         utils::compute_lagrange_bases,
     };
+    use rayon::prelude::*;
 
     #[test]
     fn end_to_end() {
-        const N: usize = 128;
-        const T: usize = 63;
+        const N: usize = 16;
+        const T: usize = 7;
         const K: usize = 3;
 
         let mut rng = rand::rng();
@@ -54,18 +55,46 @@ mod tests {
         for p in &mut parties {
             p.ingest_dealer_proof((&c_vals, &z)).unwrap();
 
-            p.ingest_share(&shares[p.index - 1]);
+            p.ingest_encrypted_shares(&shares).unwrap();
 
-            assert!(
-                p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
-                "share verification failure"
-            );
-
-            p.ingest_shares(&shares).unwrap();
-
-            let verif_result = p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap();
+            let verif_result = p
+                .verify_encrypted_shares(&mut hasher, &mut buf, &xpows)
+                .unwrap();
 
             assert!(verif_result, "share verification failure");
+        }
+
+        let (decrypted_shares, share_proofs): (
+            Vec<Vec<CompressedRistretto>>,
+            Vec<Vec<(Scalar, Scalar)>>,
+        ) = parties
+            .iter_mut()
+            .map(|p| {
+                p.decrypt_shares().unwrap();
+                p.dleq_share(&g, &mut rng, &mut hasher, &mut buf).unwrap();
+
+                (
+                    p.decrypted_share
+                        .clone()
+                        .unwrap()
+                        .par_iter()
+                        .map(|ds| ds.compress())
+                        .collect(),
+                    p.share_proof.clone().unwrap(),
+                )
+            })
+            .collect();
+
+        for p in &mut parties {
+            let (mut decrypted_shares, mut share_proofs) =
+                (decrypted_shares.clone(), share_proofs.clone());
+
+            decrypted_shares.remove(p.index - 1);
+            share_proofs.remove(p.index - 1);
+            p.ingest_decrypted_shares_and_proofs(&decrypted_shares, share_proofs)
+                .unwrap();
+
+            assert!(p.verify_decrypted_shares(&g).unwrap());
 
             p.select_qualified_set(&mut rng).unwrap();
 
@@ -80,8 +109,9 @@ mod tests {
             let lagrange_bases = compute_lagrange_bases(&indices);
 
             let sec = p.reconstruct_secrets(&lagrange_bases).unwrap();
-
-            assert!(secrets == sec, "Invalid Reconstructed Secret");
+            sec.iter()
+                .zip(secrets.iter())
+                .for_each(|(secret, dealer_secret)| assert_eq!(g * dealer_secret, *secret));
         }
     }
 }

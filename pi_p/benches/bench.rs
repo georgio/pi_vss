@@ -21,14 +21,14 @@ fn pvss(c: &mut Criterion) {
         let mut hasher = blake3::Hasher::new();
         let mut buf: [u8; 64] = [0u8; 64];
 
-        let G: RistrettoPoint = random_point(&mut rng);
+        let g: RistrettoPoint = random_point(&mut rng);
         let g1: RistrettoPoint = random_point(&mut rng);
         let g2: RistrettoPoint = random_point(&mut rng);
         let g3: RistrettoPoint = random_point(&mut rng);
 
         let xpows = gen_powers(n, t);
 
-        let mut parties = generate_parties(&G, &g1, &g2, &g3, &mut rng, n, t);
+        let mut parties = generate_parties(&g, &g1, &g2, &g3, &mut rng, n, t);
 
         let public_keys: Vec<CompressedRistretto> =
             parties.iter().map(|party| party.public_key.0).collect();

@@ -1,7 +1,4 @@
-use std::{
-    fs::File,
-    io::{Read, Write},
-};
+use std::{fs::File, io::Read};
 
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
