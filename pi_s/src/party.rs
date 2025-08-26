@@ -1,7 +1,7 @@
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 
-use rand::{CryptoRng, Rng, RngCore, seq::SliceRandom};
+use rand::{CryptoRng, RngCore, seq::SliceRandom};
 use zeroize::Zeroize;
 
 use common::{
@@ -40,7 +40,7 @@ pub struct Party {
 
 impl Party {
     pub fn new<R>(
-        G: &RistrettoPoint,
+        g: &RistrettoPoint,
         rng: &mut R,
         n: usize,
         t: usize,
@@ -50,7 +50,7 @@ impl Party {
         R: CryptoRng + RngCore,
     {
         let private_key = common::random::random_scalar(rng);
-        let public_key = G * private_key;
+        let public_key = g * private_key;
 
         if index <= n && t < n && t as f32 == ((n - 1) as f32 / 2.0).floor() {
             Ok(Self {
@@ -169,26 +169,25 @@ impl Party {
         &self,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
+        xpows: &Vec<Vec<Scalar>>,
     ) -> Result<bool, Error> {
         match &self.dealer_proof {
             Some((d, z)) => match (&self.encrypted_shares, &self.public_keys) {
                 (Some(encrypted_shares), Some(public_keys)) => {
-                    let shares: Vec<CompressedRistretto> = z
-                        .evaluate_multiply(public_keys, 1)
-                        .1
+                    let z_evals = z.evaluate_range_precomp(xpows, 1, self.n);
+
+                    let shares: Vec<CompressedRistretto> = z_evals
                         .par_iter()
+                        .zip(public_keys)
                         .zip(encrypted_shares.1.par_iter())
-                        .map(|(x, enc_share)| (x - (enc_share * d)).compress())
+                        .map(|((z_eval, pub_key), enc_share)| {
+                            (z_eval * pub_key - (enc_share * d)).compress()
+                        })
                         .collect();
 
-                    let flat_vec: Vec<u8> = encrypted_shares
-                        .0
-                        .iter()
-                        .chain(shares.iter())
-                        .flat_map(|x| x.to_bytes())
-                        .collect();
-
-                    hasher.update(&flat_vec);
+                    encrypted_shares.0.iter().chain(&shares).for_each(|x| {
+                        hasher.update(x.as_bytes());
+                    });
 
                     hasher.finalize_xof().fill(buf);
                     let reconstructed_d = Scalar::from_bytes_mod_order_wide(buf);
@@ -243,7 +242,7 @@ impl Party {
 
     pub fn dleq_share<R>(
         &mut self,
-        G: &RistrettoPoint,
+        g: &RistrettoPoint,
         rng: &mut R,
         hasher: &mut Hasher,
         buf: &mut [u8; 64],
@@ -254,7 +253,7 @@ impl Party {
         match (&self.decrypted_share, &self.encrypted_share) {
             (Some(decrypted_share), Some(encrypted_share)) => {
                 let r = common::random::random_scalar(rng);
-                let c1 = (G * &r).compress();
+                let c1 = (g * &r).compress();
                 let c2 = (decrypted_share * r).compress();
 
                 hasher.update(self.public_key.0.as_bytes());
@@ -282,7 +281,7 @@ impl Party {
         }
     }
 
-    pub fn verify_decrypted_shares(&mut self, G: &RistrettoPoint) -> Result<bool, Error> {
+    pub fn verify_decrypted_shares(&mut self, g: &RistrettoPoint) -> Result<bool, Error> {
         match (&self.public_keys, &self.encrypted_shares) {
             (Some(public_keys), Some(enc_shares)) => {
                 match (&self.decrypted_shares, &self.share_proofs) {
@@ -298,7 +297,7 @@ impl Party {
                             .map_init(
                                 ||(blake3::Hasher::new(), [0u8;64]), | (hasher, buf),
                                 (i, (dec_share, ((d, z), (public_key, enc_share)))) | {
-                                    let num1 =  G * z;
+                                    let num1 =  g * z;
                                     let num2 = dec_share * z;
 
                                     let denom1 = public_key * d;
@@ -348,11 +347,11 @@ impl Party {
     }
 }
 
-pub fn generate_parties<R>(G: &RistrettoPoint, rng: &mut R, n: usize, t: usize) -> Vec<Party>
+pub fn generate_parties<R>(g: &RistrettoPoint, rng: &mut R, n: usize, t: usize) -> Vec<Party>
 where
     R: CryptoRng + RngCore,
 {
     (1..=n)
-        .map(|i| Party::new(G, rng, n, t, i).unwrap())
+        .map(|i| Party::new(g, rng, n, t, i).unwrap())
         .collect()
 }

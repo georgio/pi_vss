@@ -1,4 +1,4 @@
-use common::{random::random_scalar, utils::precompute_lambda};
+use common::{precompute::gen_powers, random::random_scalar, utils::precompute_lambda};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
 use pi_s::{dealer::Dealer, party::generate_parties};
@@ -16,9 +16,10 @@ fn pvss(c: &mut Criterion) {
         let mut hasher = blake3::Hasher::new();
         let mut buf: [u8; 64] = [0u8; 64];
 
-        let G: RistrettoPoint = RistrettoPoint::mul_base(&random_scalar(&mut rng));
+        let g: RistrettoPoint = RistrettoPoint::mul_base(&random_scalar(&mut rng));
 
-        let mut parties = generate_parties(&G, &mut rng, n, t);
+        let mut parties = generate_parties(&g, &mut rng, n, t);
+        let xpows = gen_powers(n, t);
 
         let public_keys: Vec<CompressedRistretto> =
             parties.iter().map(|party| party.public_key.0).collect();
@@ -39,7 +40,7 @@ fn pvss(c: &mut Criterion) {
         let secret = random_scalar(&mut rng);
 
         let (encrypted_shares, (d, z)) =
-            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret);
+            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret);
 
         c.bench_function(
             &format!("(n: {}, t: {}) | Pi_S PVSS | Dealer: Deal Secret", n, t),
@@ -47,7 +48,7 @@ fn pvss(c: &mut Criterion) {
                 b.iter_batched(
                     || (blake3::Hasher::new(), [0u8; 64]),
                     |(mut hasher, mut buf)| {
-                        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &secret)
+                        dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secret)
                     },
                     BatchSize::PerIteration,
                 )
@@ -58,7 +59,9 @@ fn pvss(c: &mut Criterion) {
             p.ingest_encrypted_shares(&encrypted_shares).unwrap();
             p.ingest_dealer_proof(d, z.clone()).unwrap();
 
-            let res = p.verify_encrypted_shares(&mut hasher, &mut buf).unwrap();
+            let res = p
+                .verify_encrypted_shares(&mut hasher, &mut buf, &xpows)
+                .unwrap();
 
             assert!(res, "encrypted share verification failure");
         }
@@ -74,7 +77,7 @@ fn pvss(c: &mut Criterion) {
                     |(mut hasher, mut buf)| {
                         assert!(
                             parties[0]
-                                .verify_encrypted_shares(&mut hasher, &mut buf)
+                                .verify_encrypted_shares(&mut hasher, &mut buf, &xpows)
                                 .unwrap()
                         )
                     },
@@ -88,7 +91,7 @@ fn pvss(c: &mut Criterion) {
                 .iter_mut()
                 .map(|p| {
                     p.decrypt_share().unwrap();
-                    p.dleq_share(&G, &mut rng, &mut hasher, &mut buf).unwrap();
+                    p.dleq_share(&g, &mut rng, &mut hasher, &mut buf).unwrap();
                     (
                         p.decrypted_share.unwrap().compress(),
                         p.share_proof.unwrap(),
@@ -108,7 +111,7 @@ fn pvss(c: &mut Criterion) {
                     || (blake3::Hasher::new(), [0u8; 64]),
                     |(mut hasher, mut buf)| {
                         parties[0]
-                            .dleq_share(&G, &mut rng, &mut hasher, &mut buf)
+                            .dleq_share(&g, &mut rng, &mut hasher, &mut buf)
                             .unwrap()
                     },
                     BatchSize::PerIteration,
@@ -133,7 +136,7 @@ fn pvss(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| {
-                    parties[0].verify_decrypted_shares(&G).unwrap();
+                    parties[0].verify_decrypted_shares(&g).unwrap();
                 })
             },
         );
