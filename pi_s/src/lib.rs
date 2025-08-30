@@ -7,7 +7,11 @@ mod tests {
 
     use crate::{dealer::Dealer, party::generate_parties};
 
-    use common::{precompute::gen_powers, utils::compute_lagrange_bases};
+    use common::{
+        precompute::gen_powers,
+        secret_sharing::{reconstruct_secret_exponent, select_qualified_set},
+        utils::{compute_lagrange_bases, ingest_public_keys},
+    };
 
     #[test]
     fn end_to_end() {
@@ -38,7 +42,9 @@ mod tests {
                 .copied()
                 .collect();
 
-            party.ingest_public_keys(&public_keys).unwrap();
+            party.public_keys = Some(
+                ingest_public_keys(N, &party.public_key.1, party.index, &public_keys).unwrap(),
+            );
         }
 
         let secret = common::random::random_scalar(&mut rng);
@@ -82,7 +88,10 @@ mod tests {
 
             assert!(p.verify_decrypted_shares(&g).unwrap());
 
-            p.select_qualified_set(&mut rng).unwrap();
+            p.qualified_set = Some(
+                select_qualified_set(&mut rng, p.t, &p.decrypted_shares, &p.validated_shares)
+                    .unwrap(),
+            );
 
             let indices: Vec<usize> = p
                 .qualified_set
@@ -94,7 +103,8 @@ mod tests {
 
             let lagrange_bases = compute_lagrange_bases(&indices);
 
-            reconstructed_secrets.push(p.reconstruct_secret(&lagrange_bases).unwrap());
+            reconstructed_secrets
+                .push(reconstruct_secret_exponent(&p.qualified_set, &lagrange_bases).unwrap());
         }
         reconstructed_secrets
             .iter()

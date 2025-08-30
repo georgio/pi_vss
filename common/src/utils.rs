@@ -5,7 +5,10 @@ use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 use rayon::prelude::*;
 use zeroize::Zeroize;
 
-use crate::error::{Error, ErrorKind::PointDecompressionError};
+use crate::error::{
+    Error,
+    ErrorKind::{CountMismatch, PointDecompressionError},
+};
 
 pub fn pointwise_op_in_place(
     op: fn(Scalar, Scalar) -> Scalar,
@@ -154,4 +157,23 @@ pub fn batch_decompress_batched_ristretto_points(
         .par_iter()
         .map(|compressed_points| batch_decompress_ristretto_points(compressed_points))
         .collect()
+}
+
+pub fn ingest_public_keys(
+    n: usize,
+    own_public_key: &RistrettoPoint,
+    own_index: usize,
+    public_keys: &[CompressedRistretto],
+) -> Result<Vec<RistrettoPoint>, Error> {
+    if public_keys.len() == n - 1 {
+        match batch_decompress_ristretto_points(public_keys) {
+            Ok(mut pks) => {
+                pks.insert(own_index - 1, *own_public_key);
+                Ok(pks)
+            }
+            Err(x) => Err(x),
+        }
+    } else {
+        Err(CountMismatch(n, "parties", public_keys.len(), "public_keys").into())
+    }
 }

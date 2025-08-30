@@ -1,6 +1,7 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
+    secret_sharing::generate_shares,
 };
 
 use blake3::Hasher;
@@ -44,14 +45,14 @@ impl Dealer {
         R: CryptoRng + RngCore,
     {
         self.secret = Some(*secret);
-        let (f_polynomial, f_evals) = self.generate_shares(rng, x_pows, secret);
+        let (f_polynomial, f_evals) = self.generate_encrypted_shares(rng, x_pows, secret);
 
         let (d, z) = self.generate_proof(rng, hasher, buf, x_pows, f_polynomial, &f_evals);
 
         (f_evals, (d, z))
     }
 
-    pub fn generate_shares<R>(
+    pub fn generate_encrypted_shares<R>(
         &self,
         rng: &mut R,
         x_pows: &Vec<Vec<Scalar>>,
@@ -60,9 +61,8 @@ impl Dealer {
     where
         R: CryptoRng,
     {
-        let f_polynomial = Polynomial::sample_set_f0(self.t, rng, secret);
-
-        let f_evals = f_polynomial.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
+        let (f_polynomial, f_evals) =
+            generate_shares(rng, self.public_keys.len(), self.t, x_pows, secret);
 
         let encrypted_shares = f_evals
             .par_iter()

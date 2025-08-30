@@ -1,6 +1,7 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
+    secret_sharing::generate_encrypted_shares_batched,
     utils::{batch_decompress_ristretto_points, compute_d_powers_from_point_commitments},
 };
 use rand::{CryptoRng, RngCore};
@@ -56,40 +57,12 @@ impl Dealer {
         // number of secrets to share
         let k = secrets.len();
 
-        let (mut f_polynomials, f_evals) = self.generate_shares(&x_pows, k, secrets);
+        let (mut f_polynomials, f_evals) =
+            generate_encrypted_shares_batched(self.t, &x_pows, &self.public_keys, secrets);
 
         let (d, z) = self.generate_proof(rng, hasher, buf, x_pows, k, &mut f_polynomials, &f_evals);
 
         (f_evals, (d, z))
-    }
-
-    pub fn generate_shares(
-        &self,
-        x_pows: &Vec<Vec<Scalar>>,
-        k: usize,
-        secrets: &Vec<Scalar>,
-    ) -> (Vec<Polynomial>, Vec<Vec<CompressedRistretto>>) {
-        // This contains k * f_polynomial
-        let f_polynomials = Polynomial::sample_n_set_f0(k, self.t, secrets).unwrap();
-        // evals is vec[vec[k]; n]
-        let f_evals = Polynomial::evaluate_many_range_precomp(
-            x_pows,
-            &f_polynomials,
-            1,
-            self.public_keys.len(),
-        );
-
-        let encrypted_shares = f_evals
-            .par_iter()
-            .zip(self.public_keys.par_iter())
-            .map(|(fk, pub_key)| {
-                fk.par_iter()
-                    .map(|f_eval| (f_eval * pub_key).compress())
-                    .collect()
-            })
-            .collect();
-
-        (f_polynomials, encrypted_shares)
     }
 
     pub fn generate_proof<R>(

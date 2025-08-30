@@ -1,7 +1,8 @@
 use common::{
     precompute::gen_powers,
     random::{random_point, random_scalar},
-    utils::compute_lagrange_bases,
+    secret_sharing::{reconstruct_secret, select_qualified_set},
+    utils::{compute_lagrange_bases, ingest_public_keys},
 };
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
 use pi_p::{dealer::Dealer, party::generate_parties};
@@ -35,7 +36,8 @@ fn main() {
             .copied()
             .collect();
 
-        party.ingest_public_keys(&public_keys).unwrap();
+        party.public_keys =
+            Some(ingest_public_keys(N, &party.public_key.1, party.index, &public_keys).unwrap());
     }
 
     let secret = random_scalar(&mut rng);
@@ -59,7 +61,17 @@ fn main() {
             "others share verification failure"
         );
 
-        p.select_qualified_set(&mut rng).unwrap();
+        let party_shares = p
+            .shares
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(p_share, _)| p_share.clone())
+            .collect();
+
+        p.qualified_set = Some(
+            select_qualified_set(&mut rng, p.t, &Some(party_shares), &p.validated_shares).unwrap(),
+        );
 
         let indices: Vec<usize> = p
             .qualified_set
@@ -71,7 +83,7 @@ fn main() {
 
         let lagrange_bases = compute_lagrange_bases(&indices);
 
-        let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
+        let sec = reconstruct_secret(&p.qualified_set, &lagrange_bases).unwrap();
 
         assert!(secret == sec, "Invalid Reconstructed Secret");
     }

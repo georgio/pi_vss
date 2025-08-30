@@ -1,17 +1,10 @@
-use common::{precompute::gen_powers, random::random_scalar, utils::precompute_lambda};
+use common::{BENCH_N_T, precompute::gen_powers, random::random_scalar, utils::ingest_public_keys};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, scalar::Scalar};
 use pi_s::{dealer::Dealer, party::generate_parties};
 
 fn pvss(c: &mut Criterion) {
-    for (n, t) in [
-        (64, 31),
-        (128, 63),
-        (256, 127),
-        (512, 255),
-        (1024, 511),
-        (2048, 1023),
-    ] {
+    for (n, t) in BENCH_N_T {
         let mut rng = rand::rng();
         let mut hasher = blake3::Hasher::new();
         let mut buf: [u8; 64] = [0u8; 64];
@@ -35,7 +28,9 @@ fn pvss(c: &mut Criterion) {
                 .copied()
                 .collect();
 
-            party.ingest_public_keys(&public_keys).unwrap();
+            party.public_keys = Some(
+                ingest_public_keys(n, &party.public_key.1, party.index, &public_keys).unwrap(),
+            );
         }
         let secret = random_scalar(&mut rng);
 
@@ -141,19 +136,19 @@ fn pvss(c: &mut Criterion) {
             },
         );
 
-        let lambdas = precompute_lambda(n, t);
+        // let lambdas = precompute_lambda(n, t);
 
-        c.bench_function(
-            &format!(
-                "(n: {}, t: {}) | Pi_S PVSS | Party: Reconstruct Secret",
-                n, t
-            ),
-            |b| {
-                b.iter(|| {
-                    parties[0].reconstruct_secret(&lambdas).unwrap();
-                })
-            },
-        );
+        //     c.bench_function(
+        //         &format!(
+        //             "(n: {}, t: {}) | Pi_S PVSS | Party: Reconstruct Secret",
+        //             n, t
+        //         ),
+        //         |b| {
+        //             b.iter(|| {
+        //                 parties[0].reconstruct_secret(&lambdas).unwrap();
+        //             })
+        //         },
+        //     );
     }
 }
 

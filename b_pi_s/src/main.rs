@@ -32,7 +32,9 @@
 //             .copied()
 //             .collect();
 
-//         party.ingest_public_keys(&public_keys).unwrap();
+//         party.public_keys = Some(
+//     ingest_public_keys(n, &party.public_key.1, party.index, &public_keys).unwrap(),
+// );
 //     }
 
 //     let secrets = random_scalars(&mut rng, 5);
@@ -55,7 +57,8 @@
 //             "others share verification failure"
 //         );
 
-//         p.select_qualified_set(&mut rng).unwrap();
+//         p.qualified_set =
+// Some(select_qualified_set(&mut rng, p.t, &p.shares, &p.validated_shares).unwrap());
 
 //         let indices: Vec<usize> = p
 //             .qualified_set
@@ -67,7 +70,7 @@
 
 //         let lagrange_bases = compute_lagrange_bases(&indices);
 
-//         let sec = p.reconstruct_secrets(&lagrange_bases).unwrap();
+//         let sec = reconstruct_secrets(&p.qualified_set, &lagrange_bases).unwrap();
 
 //         assert!(secrets == sec, "Invalid Reconstructed Secret");
 //     }
@@ -98,7 +101,9 @@ fn main() {
     //         .copied()
     //         .collect();
 
-    //     party.ingest_public_keys(&public_keys).unwrap();
+    //     party.public_keys = Some(
+    //     ingest_public_keys(n, &party.public_key.1, party.index, &public_keys).unwrap(),
+    // );
     // }
 
     // let secrets = random_scalars(&mut rng, 5);

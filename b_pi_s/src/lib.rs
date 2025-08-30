@@ -11,7 +11,8 @@ mod tests {
     use common::{
         precompute::gen_powers,
         random::{random_point, random_scalars},
-        utils::compute_lagrange_bases,
+        secret_sharing::{reconstruct_secrets_exponent, select_qualified_set},
+        utils::{compute_lagrange_bases, ingest_public_keys},
     };
     use rayon::prelude::*;
 
@@ -44,7 +45,9 @@ mod tests {
                 .copied()
                 .collect();
 
-            party.ingest_public_keys(&public_keys).unwrap();
+            party.public_keys = Some(
+                ingest_public_keys(N, &party.public_key.1, party.index, &public_keys).unwrap(),
+            );
         }
 
         let secrets = random_scalars(&mut rng, K);
@@ -96,7 +99,10 @@ mod tests {
 
             assert!(p.verify_decrypted_shares(&g).unwrap());
 
-            p.select_qualified_set(&mut rng).unwrap();
+            p.qualified_set = Some(
+                select_qualified_set(&mut rng, p.t, &p.decrypted_shares, &p.validated_shares)
+                    .unwrap(),
+            );
 
             let indices: Vec<usize> = p
                 .qualified_set
@@ -108,7 +114,8 @@ mod tests {
 
             let lagrange_bases = compute_lagrange_bases(&indices);
 
-            let sec = p.reconstruct_secrets(&lagrange_bases).unwrap();
+            let sec = reconstruct_secrets_exponent(&p.qualified_set, &lagrange_bases).unwrap();
+
             sec.iter()
                 .zip(secrets.iter())
                 .for_each(|(secret, dealer_secret)| assert_eq!(g * dealer_secret, *secret));

@@ -1,5 +1,4 @@
-use blake3::Hasher;
-use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
+use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto, traits::Identity};
 use rand::{CryptoRng, RngCore};
 
 use common::{
@@ -10,35 +9,31 @@ use common::{
             UninitializedValue,
         },
     },
-    polynomial::Polynomial,
     random::random_scalar,
-    utils::compute_d_from_point_commitments,
 };
 use rayon::prelude::*;
 
 #[derive(Clone)]
 pub struct Party {
-    pub g1: RistrettoPoint,
-    pub g2: RistrettoPoint,
+    pub g: Vec<RistrettoPoint>,
     pub private_key: Scalar,
     pub public_key: (CompressedRistretto, RistrettoPoint),
     pub index: usize,
     pub n: usize,
     pub t: usize,
     pub public_keys: Option<Vec<RistrettoPoint>>,
-    pub dealer_proof: Option<(Vec<CompressedRistretto>, Vec<RistrettoPoint>, Polynomial)>,
+    pub dealer_proof: Option<(Vec<CompressedRistretto>, Vec<RistrettoPoint>)>,
     pub validated_shares: Vec<usize>,
-    pub share: Option<Scalar>,
+    pub share: Option<Vec<Scalar>>,
     pub d: Option<Scalar>,
-    pub shares: Option<Vec<Scalar>>,
-    pub qualified_set: Option<Vec<(usize, Scalar)>>,
+    pub shares: Option<Vec<Vec<Scalar>>>,
+    pub qualified_set: Option<Vec<(usize, Vec<Scalar>)>>,
 }
 
 impl Party {
     pub fn new<R>(
-        g: &RistrettoPoint,
-        g1: RistrettoPoint,
-        g2: RistrettoPoint,
+        generator: &RistrettoPoint,
+        g: Vec<RistrettoPoint>,
         rng: &mut R,
         n: usize,
         t: usize,
@@ -48,12 +43,11 @@ impl Party {
         R: CryptoRng + RngCore,
     {
         let private_key = random_scalar(rng);
-        let public_key = g * &private_key;
+        let public_key = generator * &private_key;
 
         if index <= n && t < n && t as f32 == ((n - 1) as f32 / 2.0).floor() {
             Ok(Self {
-                g1: g1.clone(),
-                g2: g2.clone(),
+                g: g.clone(),
                 private_key,
                 public_key: (public_key.compress(), public_key),
                 index,
@@ -72,22 +66,18 @@ impl Party {
         }
     }
 
-    pub fn ingest_share(&mut self, share: &Scalar) {
+    pub fn ingest_share(&mut self, share: &Vec<Scalar>) {
+        assert!(share.len() == self.g.len());
         self.share = Some(share.clone());
     }
 
-    pub fn ingest_dealer_proof(
-        &mut self,
-        proof: (&Vec<CompressedRistretto>, &Polynomial),
-    ) -> Result<(), Error> {
-        if proof.1.len() != self.t + 1 {
-            Err(InvalidProof(format!("z len: {}, t: {}", proof.1.len(), self.t + 1)).into())
-        } else if proof.0.len() != self.n {
-            Err(InvalidProof(format!("c_vals len: {}, n: {}", proof.0.len(), self.n)).into())
+    pub fn ingest_dealer_proof(&mut self, proof: &Vec<CompressedRistretto>) -> Result<(), Error> {
+        if proof.len() != self.t + 1 {
+            Err(InvalidProof(format!("c_vals len: {}, t: {}", proof.len(), self.t + 1)).into())
         } else {
             let mut decompressed_c_vals = Vec::with_capacity(self.n);
 
-            for c_i in proof.0 {
+            for c_i in proof {
                 match c_i.decompress() {
                     Some(c) => decompressed_c_vals.push(c),
                     None => {
@@ -97,28 +87,28 @@ impl Party {
                     }
                 }
             }
-            self.dealer_proof = Some((proof.0.clone(), decompressed_c_vals, proof.1.clone()));
+            self.dealer_proof = Some((proof.clone(), decompressed_c_vals));
             Ok(())
         }
     }
 
-    pub fn verify_share(
-        &self,
-        hasher: &mut Hasher,
-        buf: &mut [u8; 64],
-        x_pows: &Vec<Vec<Scalar>>,
-    ) -> Result<bool, Error> {
+    pub fn verify_share(&self) -> Result<bool, Error> {
         match &self.dealer_proof {
-            Some((compressed_cvals, cvals, z)) => match &self.share {
+            Some((_, cvals)) => match &self.share {
                 Some(fi) => {
-                    let d = compute_d_from_point_commitments(hasher, buf, &compressed_cvals);
-                    let zi = z.evaluate_precomp(x_pows, self.index);
+                    let a = fi
+                        .par_iter()
+                        .zip(self.g.par_iter())
+                        .map(|(fik, gk)| fik * gk)
+                        .reduce(|| RistrettoPoint::identity(), |acc, prod| acc + prod);
 
-                    let expected_c = cvals[self.index - 1];
+                    let b = cvals
+                        .par_iter()
+                        .enumerate()
+                        .map(|(t, c)| c * Scalar::from(self.index.pow(t as u32) as u64))
+                        .reduce(|| RistrettoPoint::identity(), |acc, prod| acc + prod);
 
-                    let c = self.g1 * fi + self.g2 * Polynomial::compute_r_eval(&zi, &[*fi], &[d]);
-
-                    Ok(expected_c == c)
+                    Ok(a == b)
                 }
                 None => Err(UninitializedValue("party.share").into()),
             },
@@ -126,31 +116,27 @@ impl Party {
         }
     }
 
-    pub fn verify_shares(
-        &mut self,
-        hasher: &mut Hasher,
-        buf: &mut [u8; 64],
-        x_pows: &Vec<Vec<Scalar>>,
-    ) -> Result<bool, Error> {
+    pub fn verify_shares(&mut self) -> Result<bool, Error> {
         match &self.dealer_proof {
-            Some((compressed_cvals, cvals, z)) => match &self.shares {
+            Some((_, cvals)) => match &self.shares {
                 Some(shares) => {
-                    let d = compute_d_from_point_commitments(hasher, buf, &compressed_cvals);
-                    let z_evals = z.evaluate_range_precomp(x_pows, 1, self.n);
-
                     self.validated_shares = shares
-                        .par_iter()
-                        .zip(z_evals.par_iter())
+                        .iter()
                         .enumerate()
-                        .map(|(i, (fi, zi))| {
-                            if cvals[i]
-                                == self.g1 * fi
-                                    + self.g2 * Polynomial::compute_r_eval(zi, &[*fi], &[d])
-                            {
-                                Some(i)
-                            } else {
-                                None
-                            }
+                        .map(|(i, fi)| {
+                            let a = fi
+                                .par_iter()
+                                .zip(self.g.par_iter())
+                                .map(|(fik, gk)| fik * gk)
+                                .reduce(|| RistrettoPoint::identity(), |acc, prod| acc + prod);
+
+                            let b = cvals
+                                .par_iter()
+                                .enumerate()
+                                .map(|(t, c)| c * Scalar::from((i + 1).pow(t as u32) as u64))
+                                .reduce(|| RistrettoPoint::identity(), |acc, prod| acc + prod);
+
+                            if a == b { Some(i) } else { None }
                         })
                         .filter(Option::is_some)
                         .map(|res| res.unwrap())
@@ -163,8 +149,8 @@ impl Party {
         }
     }
 
-    pub fn ingest_shares(&mut self, shares: &Vec<Scalar>) -> Result<(), Error> {
-        if shares.len() == self.n {
+    pub fn ingest_shares(&mut self, shares: &Vec<Vec<Scalar>>) -> Result<(), Error> {
+        if shares.len() == self.n && shares[0].len() == self.g.len() {
             self.shares = Some(shares.clone());
             Ok(())
         } else {
@@ -174,9 +160,8 @@ impl Party {
 }
 
 pub fn generate_parties<R>(
-    g: &RistrettoPoint,
-    g1: &RistrettoPoint,
-    g2: &RistrettoPoint,
+    generator: &RistrettoPoint,
+    g: &Vec<RistrettoPoint>,
     rng: &mut R,
     n: usize,
     t: usize,
@@ -185,6 +170,6 @@ where
     R: CryptoRng + RngCore,
 {
     (1..=n)
-        .map(|i| Party::new(g, g1.clone(), g2.clone(), rng, n, t, i).unwrap())
+        .map(|i| Party::new(generator, g.clone(), rng, n, t, i).unwrap())
         .collect()
 }

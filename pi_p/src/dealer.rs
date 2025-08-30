@@ -2,6 +2,7 @@ use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
     random::random_scalars,
+    secret_sharing::generate_shares,
     utils::{batch_decompress_ristretto_points, compute_d_from_point_commitments},
 };
 use rand::{CryptoRng, RngCore};
@@ -62,27 +63,14 @@ impl Dealer {
     where
         R: CryptoRng + RngCore,
     {
-        let (f_polynomial, f_evals) = self.generate_shares(rng, x_pows, secret);
+        let (f_polynomial, f_evals) =
+            generate_shares(rng, self.public_keys.len(), self.t, x_pows, secret);
 
         let mut c_buf: Vec<CompressedRistretto> = Vec::with_capacity(self.public_keys.len());
 
         let (g, z) =
             self.generate_proof(rng, hasher, buf, &mut c_buf, x_pows, f_polynomial, &f_evals);
         (f_evals, (g, c_buf, z))
-    }
-
-    pub fn generate_shares<R>(
-        &self,
-        rng: &mut R,
-        x_pows: &Vec<Vec<Scalar>>,
-        secret: &Scalar,
-    ) -> (Polynomial, Vec<Scalar>)
-    where
-        R: CryptoRng,
-    {
-        let f_polynomial = Polynomial::sample_set_f0(self.t, rng, secret);
-        let f_evals = f_polynomial.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
-        (f_polynomial, f_evals)
     }
 
     pub fn generate_proof<R>(

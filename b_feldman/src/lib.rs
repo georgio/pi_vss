@@ -10,34 +10,30 @@ mod tests {
 
     use common::{
         precompute::gen_powers,
-        random::{random_point, random_scalars},
+        random::{random_point, random_points, random_scalars},
         secret_sharing::{reconstruct_secrets, select_qualified_set},
         utils::{compute_lagrange_bases, ingest_public_keys},
     };
 
     #[test]
     fn end_to_end() {
-        const N: usize = 128;
-        const T: usize = 63;
+        const N: usize = 16;
+        const T: usize = 7;
         const K: usize = 3;
 
         let mut rng = rand::rng();
-        let mut hasher = blake3::Hasher::new();
-        let mut buf = [0u8; 64];
 
-        let g: RistrettoPoint = random_point(&mut rng);
-
-        let g1: RistrettoPoint = random_point(&mut rng);
-        let g2: RistrettoPoint = random_point(&mut rng);
+        let generator: RistrettoPoint = random_point(&mut rng);
+        let g: Vec<RistrettoPoint> = random_points(&mut rng, K);
 
         let xpows = gen_powers(N, T);
 
-        let mut parties = generate_parties(&g, &g1, &g2, &mut rng, N, T);
+        let mut parties = generate_parties(&generator, &g, &mut rng, N, T);
 
         let public_keys: Vec<CompressedRistretto> =
             parties.iter().map(|party| party.public_key.0).collect();
 
-        let mut dealer = Dealer::new(g1, g2, N, T, &public_keys).unwrap();
+        let mut dealer = Dealer::new(g, N, T, &public_keys).unwrap();
 
         for party in &mut parties {
             let public_keys: Vec<CompressedRistretto> = public_keys
@@ -53,37 +49,25 @@ mod tests {
 
         let secrets = random_scalars(&mut rng, K);
 
-        let (shares, (g, c_vals, z)) =
-            dealer.deal_secret(&mut rng, &mut hasher, &mut buf, &xpows, &secrets);
+        let (shares, c_vals) = dealer.deal_secret(&xpows, &secrets);
 
         for p in &mut parties {
-            p.ingest_dealer_proof((&c_vals, &z)).unwrap();
+            // if p.index == 1 {
+            p.ingest_dealer_proof(&c_vals).unwrap();
 
-            p.ingest_share((&shares[p.index - 1], &g[p.index - 1]));
+            p.ingest_share(&shares[p.index - 1]);
             assert!(
-                p.verify_share(&mut hasher, &mut buf, &xpows).unwrap(),
-                "share verification failure"
+                p.verify_share().unwrap(),
+                "individual share verification failure"
             );
+            println!("pass own share: {}", p.index);
 
-            p.ingest_shares((&shares, &g)).unwrap();
+            p.ingest_shares(&shares).unwrap();
 
-            assert!(
-                p.verify_shares(&mut hasher, &mut buf, &xpows).unwrap(),
-                "share verification failure"
-            );
+            assert!(p.verify_shares().unwrap(), "share verification failure");
 
-            let party_shares = p
-                .shares
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|(p_share, _)| p_share.clone())
-                .collect();
-
-            p.qualified_set = Some(
-                select_qualified_set(&mut rng, p.t, &Some(party_shares), &p.validated_shares)
-                    .unwrap(),
-            );
+            p.qualified_set =
+                Some(select_qualified_set(&mut rng, p.t, &p.shares, &p.validated_shares).unwrap());
 
             let indices: Vec<usize> = p
                 .qualified_set

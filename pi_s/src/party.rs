@@ -1,18 +1,16 @@
 use blake3::Hasher;
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto};
 
-use rand::{CryptoRng, RngCore, seq::SliceRandom};
+use rand::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
 use common::{
     error::{
         Error,
-        ErrorKind::{
-            CountMismatch, InsufficientShares, InvalidPararmeterSet, InvalidProof,
-            UninitializedValue,
-        },
+        ErrorKind::{CountMismatch, InvalidPararmeterSet, InvalidProof, UninitializedValue},
     },
     polynomial::Polynomial,
+    secret_sharing::decrypt_share,
     utils::batch_decompress_ristretto_points,
 };
 use rayon::prelude::*;
@@ -96,23 +94,6 @@ impl Party {
                 "encrypted shares",
             )
             .into())
-        }
-    }
-    pub fn ingest_public_keys(&mut self, public_keys: &[CompressedRistretto]) -> Result<(), Error> {
-        if public_keys.len() == self.n - 1 {
-            match batch_decompress_ristretto_points(public_keys) {
-                Ok(mut pks) => {
-                    pks.insert(
-                        self.index - 1,
-                        self.public_key.1.compress().decompress().unwrap(),
-                    );
-                    self.public_keys = Some(pks);
-                    Ok(())
-                }
-                Err(x) => Err(x),
-            }
-        } else {
-            Err(CountMismatch(self.n, "parties", public_keys.len(), "public_keys").into())
         }
     }
 
@@ -206,40 +187,14 @@ impl Party {
         }
     }
     pub fn decrypt_share(&mut self) -> Result<(), Error> {
-        let inv_private_key = self.private_key.invert();
         match &self.encrypted_share {
             Some(encrypted_share) => {
-                self.decrypted_share = Some(encrypted_share * inv_private_key);
+                self.decrypted_share = Some(decrypt_share(&self.private_key, encrypted_share));
                 Ok(())
             }
             None => Err(UninitializedValue("party.encrypted_share").into()),
         }
     }
-
-    pub fn select_qualified_set<R>(&mut self, rng: &mut R) -> Result<(), Error>
-    where
-        R: CryptoRng + RngCore,
-    {
-        match &self.decrypted_shares {
-            Some(decrypted_shares) => {
-                if self.validated_shares.len() > self.t {
-                    let mut tmp = self.validated_shares.clone();
-                    tmp.shuffle(rng);
-                    self.qualified_set = Some(
-                        tmp.into_iter()
-                            .take(self.t + 1)
-                            .map(|x| (x + 1, decrypted_shares[x]))
-                            .collect(),
-                    );
-                    Ok(())
-                } else {
-                    Err(InsufficientShares(self.validated_shares.len(), self.t).into())
-                }
-            }
-            None => Err(UninitializedValue("party.decrypted_shares").into()),
-        }
-    }
-
     pub fn dleq_share<R>(
         &mut self,
         g: &RistrettoPoint,
@@ -333,16 +288,6 @@ impl Party {
             (None, Some(_)) => Err(UninitializedValue("party.encrypted_shares").into()),
             (Some(_), None) => Err(UninitializedValue("party.public_keys").into()),
             (None, None) => Err(UninitializedValue("party.{public_keys, encrypted_shares}").into()),
-        }
-    }
-    pub fn reconstruct_secret(&self, lambdas: &Vec<Scalar>) -> Result<RistrettoPoint, Error> {
-        match &self.qualified_set {
-            Some(qualified_set) => Ok(qualified_set
-                .par_iter()
-                .zip(lambdas.par_iter())
-                .map(|((_, decrypted_share), lambda)| lambda * decrypted_share)
-                .sum()),
-            None => Err(UninitializedValue("party.qualified_set").into()),
         }
     }
 }

@@ -3,20 +3,14 @@ use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto};
 use pi_f::{dealer::Dealer, party::generate_parties};
 
 use common::{
+    BENCH_N_T,
     precompute::gen_powers,
     random::{random_point, random_scalar},
-    utils::compute_lagrange_bases,
+    utils::ingest_public_keys,
 };
 
 fn pvss(c: &mut Criterion) {
-    for (n, t) in [
-        (64, 31),
-        (128, 63),
-        (256, 127),
-        (512, 255),
-        (1024, 511),
-        (2048, 1023),
-    ] {
+    for (n, t) in BENCH_N_T {
         let mut rng = rand::rng();
         let mut hasher = blake3::Hasher::new();
         let mut buf: [u8; 64] = [0u8; 64];
@@ -41,7 +35,9 @@ fn pvss(c: &mut Criterion) {
                 .copied()
                 .collect();
 
-            party.ingest_public_keys(&public_keys).unwrap();
+            party.public_keys = Some(
+                ingest_public_keys(n, &party.public_key.1, party.index, &public_keys).unwrap(),
+            );
         }
 
         let secret = random_scalar(&mut rng);
@@ -86,47 +82,6 @@ fn pvss(c: &mut Criterion) {
                     },
                     BatchSize::PerIteration,
                 )
-            },
-        );
-
-        for p in &mut parties {
-            p.select_qualified_set(&mut rng).unwrap();
-
-            let indices: Vec<usize> = p
-                .qualified_set
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|(index, _)| *index)
-                .collect();
-
-            let lagrange_bases = compute_lagrange_bases(&indices);
-
-            let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
-            assert!(sec == secret);
-        }
-
-        parties[0].select_qualified_set(&mut rng).unwrap();
-
-        let indices: Vec<usize> = parties[0]
-            .qualified_set
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|(index, _)| *index)
-            .collect();
-
-        let lagrange_bases = compute_lagrange_bases(&indices);
-
-        c.bench_function(
-            &format!(
-                "(n: {}, t: {}) | Pi_P PVSS | Party: Reconstruct Secret",
-                n, t
-            ),
-            |b| {
-                b.iter(|| {
-                    parties[0].reconstruct_secret(&lagrange_bases).unwrap();
-                })
             },
         );
     }

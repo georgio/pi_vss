@@ -11,13 +11,15 @@ mod tests {
     use common::{
         precompute::gen_powers,
         random::{random_point, random_points, random_scalars},
+        secret_sharing::{reconstruct_secrets, select_qualified_set},
+        utils::{compute_lagrange_bases, ingest_public_keys},
     };
 
     #[test]
     fn end_to_end() {
         const N: usize = 16;
         const T: usize = 7;
-        const K: usize = 1;
+        const K: usize = 3;
 
         let mut rng = rand::rng();
 
@@ -42,7 +44,9 @@ mod tests {
                 .copied()
                 .collect();
 
-            party.ingest_public_keys(&public_keys).unwrap();
+            party.public_keys = Some(
+                ingest_public_keys(N, &party.public_key.1, party.index, &public_keys).unwrap(),
+            );
         }
 
         let secrets = random_scalars(&mut rng, K);
@@ -50,36 +54,45 @@ mod tests {
         let (shares, (r_evals, c_vals)) = dealer.deal_secret(&mut rng, &xpows, &secrets);
 
         for p in &mut parties {
-            // if p.index == 1 {
             p.ingest_dealer_proof(&c_vals).unwrap();
 
             p.ingest_share((&shares[p.index - 1], &r_evals[p.index - 1]));
             assert!(
-                p.verify_shares().unwrap(),
+                p.verify_share().unwrap(),
                 "individual share verification failure"
             );
             println!("pass own share: {}", p.index);
 
-            // p.ingest_shares((&shares, &r_evals)).unwrap();
+            p.ingest_shares((&shares, &r_evals)).unwrap();
 
-            // assert!(p.verify_shares().unwrap(), "share verification failure");
+            assert!(p.verify_shares().unwrap(), "share verification failure");
 
-            // p.select_qualified_set(&mut rng).unwrap();
+            let party_shares = p
+                .shares
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(p_share, _)| p_share.clone())
+                .collect();
 
-            // let indices: Vec<usize> = p
-            //     .qualified_set
-            //     .as_ref()
-            //     .unwrap()
-            //     .iter()
-            //     .map(|(index, _)| *index)
-            //     .collect();
+            p.qualified_set = Some(
+                select_qualified_set(&mut rng, p.t, &Some(party_shares), &p.validated_shares)
+                    .unwrap(),
+            );
 
-            // let lagrange_bases = compute_lagrange_bases(&indices);
+            let indices: Vec<usize> = p
+                .qualified_set
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(index, _)| *index)
+                .collect();
 
-            // let sec = p.reconstruct_secrets(&lagrange_bases).unwrap();
+            let lagrange_bases = compute_lagrange_bases(&indices);
 
-            // assert!(secrets == sec, "Invalid Reconstructed Secret");
+            let sec = reconstruct_secrets(&p.qualified_set, &lagrange_bases).unwrap();
+
+            assert!(secrets == sec, "Invalid Reconstructed Secret");
         }
-        // }
     }
 }

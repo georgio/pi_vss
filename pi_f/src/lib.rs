@@ -11,7 +11,8 @@ mod tests {
     use common::{
         precompute::gen_powers,
         random::{random_point, random_scalar},
-        utils::compute_lagrange_bases,
+        secret_sharing::{reconstruct_secret, select_qualified_set},
+        utils::{compute_lagrange_bases, ingest_public_keys},
     };
 
     #[test]
@@ -43,7 +44,9 @@ mod tests {
                 .copied()
                 .collect();
 
-            party.ingest_public_keys(&public_keys).unwrap();
+            party.public_keys = Some(
+                ingest_public_keys(N, &party.public_key.1, party.index, &public_keys).unwrap(),
+            );
         }
 
         let secret = random_scalar(&mut rng);
@@ -67,7 +70,8 @@ mod tests {
                 "share verification failure"
             );
 
-            p.select_qualified_set(&mut rng).unwrap();
+            p.qualified_set =
+                Some(select_qualified_set(&mut rng, p.t, &p.shares, &p.validated_shares).unwrap());
 
             let indices: Vec<usize> = p
                 .qualified_set
@@ -79,7 +83,7 @@ mod tests {
 
             let lagrange_bases = compute_lagrange_bases(&indices);
 
-            let sec = p.reconstruct_secret(&lagrange_bases).unwrap();
+            let sec = reconstruct_secret(&p.qualified_set, &lagrange_bases).unwrap();
 
             assert!(secret == sec, "Invalid Reconstructed Secret");
         }

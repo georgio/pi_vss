@@ -1,6 +1,7 @@
 use common::{
     error::{Error, ErrorKind::CountMismatch},
     polynomial::Polynomial,
+    secret_sharing::generate_shares_batched,
     utils::{batch_decompress_ristretto_points, compute_d_powers_from_hash_commitments},
 };
 use rand::{CryptoRng, RngCore};
@@ -56,7 +57,8 @@ impl Dealer {
         // number of secrets to share
         let k = secrets.len();
 
-        let (mut f_polynomials, f_evals) = self.generate_shares(&x_pows, k, secrets);
+        let (mut f_polynomials, f_evals) =
+            generate_shares_batched(self.public_keys.len(), self.t, x_pows, secrets);
 
         let mut c_buf = vec![[0u8; 64]; self.public_keys.len()];
 
@@ -72,25 +74,6 @@ impl Dealer {
         );
 
         (f_evals, (c_buf, z))
-    }
-
-    pub fn generate_shares(
-        &self,
-        x_pows: &Vec<Vec<Scalar>>,
-        k: usize,
-        secrets: &Vec<Scalar>,
-    ) -> (Vec<Polynomial>, Vec<Vec<Scalar>>) {
-        // This contains k * f_polynomial
-        let f_polynomials = Polynomial::sample_n_set_f0(k, self.t, secrets).unwrap();
-        // evals is vec[vec[k]; n]
-        let f_evals = Polynomial::evaluate_many_range_precomp(
-            x_pows,
-            &f_polynomials,
-            1,
-            self.public_keys.len(),
-        );
-
-        (f_polynomials, f_evals)
     }
 
     pub fn generate_proof<R>(

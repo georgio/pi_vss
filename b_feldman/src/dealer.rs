@@ -4,7 +4,6 @@ use common::{
     secret_sharing::generate_shares_batched,
     utils::batch_decompress_ristretto_points,
 };
-use rand::{CryptoRng, RngCore};
 
 use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto, traits::Identity};
 
@@ -14,7 +13,6 @@ pub struct Dealer {
     pub t: usize,
     // [g1...gk]
     pub g: Vec<RistrettoPoint>,
-    pub g0: RistrettoPoint,
     pub public_keys: Vec<RistrettoPoint>,
     pub(crate) secret: Option<Scalar>,
 }
@@ -22,7 +20,6 @@ pub struct Dealer {
 impl Dealer {
     pub fn new(
         g: Vec<RistrettoPoint>,
-        g0: RistrettoPoint,
         n: usize,
         t: usize,
         public_keys: &[CompressedRistretto],
@@ -36,7 +33,6 @@ impl Dealer {
                 public_keys: pks,
                 secret: None,
                 g: g.clone(),
-                g0: g0.clone(),
             }),
             Err(x) => Err(x),
         }
@@ -46,51 +42,33 @@ impl Dealer {
         self.t
     }
 
-    pub fn deal_secret<R>(
+    pub fn deal_secret(
         &mut self,
-        rng: &mut R,
         x_pows: &Vec<Vec<Scalar>>,
         secrets: &Vec<Scalar>,
-    ) -> (Vec<Vec<Scalar>>, (Vec<Scalar>, Vec<CompressedRistretto>))
-    where
-        R: CryptoRng + RngCore,
-    {
+    ) -> (Vec<Vec<Scalar>>, Vec<CompressedRistretto>) {
         let (f_polynomials, f_evals) =
             generate_shares_batched(self.public_keys.len(), self.t, x_pows, secrets);
 
         let mut c_buf: Vec<CompressedRistretto> = vec![CompressedRistretto::identity(); self.t + 1];
 
-        let r_evals = self.generate_proof(rng, &mut c_buf, x_pows, &f_polynomials);
-        (f_evals, (r_evals, c_buf))
+        self.generate_proof(&mut c_buf, &f_polynomials);
+        (f_evals, c_buf)
     }
 
-    pub fn generate_proof<R>(
+    pub fn generate_proof(
         &self,
-        rng: &mut R,
         c_buf: &mut Vec<CompressedRistretto>,
-        x_pows: &Vec<Vec<Scalar>>,
         f_polynomials: &Vec<Polynomial>,
-    ) -> Vec<Scalar>
-    where
-        R: CryptoRng,
-    {
-        let r = Polynomial::sample(self.t, rng);
-        let r_evals = r.evaluate_range_precomp(x_pows, 1, self.public_keys.len());
-
-        r.coef_ref()
-            .par_iter()
-            .enumerate()
-            .map(|(t, r_coef)| {
-                f_polynomials
-                    .par_iter()
-                    .zip(self.g.par_iter())
-                    .map(|(fk, gk)| gk * fk.coef_at_unchecked(t))
-                    .reduce(|| self.g0 * r_coef, |acc, prod| acc + prod)
-                    .compress()
-            })
-            .collect_into_vec(c_buf);
-
-        r_evals
+    ) {
+        c_buf.par_iter_mut().enumerate().for_each(|(t, c)| {
+            *c = f_polynomials
+                .par_iter()
+                .zip(self.g.par_iter())
+                .map(|(fk, gk)| gk * fk.coef_at_unchecked(t))
+                .reduce(|| RistrettoPoint::identity(), |acc, prod| acc + prod)
+                .compress()
+        });
     }
 
     pub fn get_pk0(&self) -> &RistrettoPoint {

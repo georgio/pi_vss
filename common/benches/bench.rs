@@ -1,9 +1,15 @@
 use blake3::Hasher;
 use common::{
+    BENCH_K, BENCH_N_T,
     error::ErrorKind::PointDecompressionError,
     polynomial::Polynomial,
-    precompute::XPowTable,
-    random::{random_scalar, random_scalars},
+    precompute::{XPowTable, gen_powers},
+    random::{random_points, random_scalar, random_scalars},
+    secret_sharing::{
+        decrypt_share, generate_encrypted_shares, generate_encrypted_shares_batched,
+        generate_shares, generate_shares_batched, reconstruct_secret, reconstruct_secret_exponent,
+        reconstruct_secrets, reconstruct_secrets_exponent, select_qualified_set,
+    },
     utils::{compute_lagrange_bases, compute_lagrange_basis},
 };
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
@@ -273,6 +279,237 @@ fn hasher_bench(c: &mut Criterion) {
     c.bench_function("Hasher Reset", |b| b.iter(|| Hasher::new()));
 }
 
+fn gen_shares(c: &mut Criterion) {
+    for (n, t) in BENCH_N_T {
+        let mut rng = rand::rng();
+
+        let x_pows = gen_powers(n, t);
+        let secret = random_scalar(&mut rng);
+
+        c.bench_function(
+            &format!("(n: {}, t: {}) | Common | Generate Shares", n, t),
+            |b| b.iter_with_large_drop(|| generate_shares(&mut rng, n, t, &x_pows, &secret)),
+        );
+        let shares = generate_shares(&mut rng, n, t, &x_pows, &secret);
+
+        let qualified_set = select_qualified_set(
+            &mut rng,
+            t,
+            &Some(shares.1),
+            &(0..n).collect::<Vec<usize>>(),
+        )
+        .unwrap();
+
+        let indices: Vec<usize> = qualified_set.iter().map(|(index, _)| *index).collect();
+
+        let lagrange_bases = compute_lagrange_bases(&indices);
+
+        let q = Some(qualified_set);
+
+        c.bench_function(
+            &format!("(n: {}, t: {}) | Common | Reconstruct Secret", n, t),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    assert_eq!(secret, reconstruct_secret(&q, &lagrange_bases).unwrap())
+                })
+            },
+        );
+    }
+}
+
+fn gen_shares_batch(c: &mut Criterion) {
+    for (n, t) in BENCH_N_T {
+        let mut rng = rand::rng();
+
+        let x_pows = gen_powers(n, t);
+        for k in BENCH_K {
+            let secrets = random_scalars(&mut rng, k);
+            let shares = generate_shares_batched(n, t, &x_pows, &secrets);
+
+            c.bench_function(
+                &format!(
+                    "(n: {}, t: {}, k: {}) | Common | Generate Shares Batch",
+                    n, t, k
+                ),
+                |b| b.iter_with_large_drop(|| generate_shares_batched(n, t, &x_pows, &secrets)),
+            );
+
+            let qualified_set = select_qualified_set(
+                &mut rng,
+                t,
+                &Some(shares.1),
+                &(0..n).collect::<Vec<usize>>(),
+            )
+            .unwrap();
+
+            let indices: Vec<usize> = qualified_set.iter().map(|(index, _)| *index).collect();
+
+            let lagrange_bases = compute_lagrange_bases(&indices);
+
+            let q = Some(qualified_set);
+
+            c.bench_function(
+                &format!(
+                    "(n: {}, t: {}, k: {}) | Common | Reconstruct Secrets",
+                    n, t, k
+                ),
+                |b| {
+                    b.iter_with_large_drop(|| {
+                        assert_eq!(secrets, reconstruct_secrets(&q, &lagrange_bases).unwrap())
+                    })
+                },
+            );
+        }
+    }
+}
+
+fn gen_encrypted_shares(c: &mut Criterion) {
+    for (n, t) in BENCH_N_T {
+        let mut rng = rand::rng();
+        let x_pows = gen_powers(n, t);
+
+        let private_keys = random_scalars(&mut rng, n);
+
+        let public_keys: Vec<RistrettoPoint> = private_keys
+            .par_iter()
+            .map(|private_key| RistrettoPoint::mul_base(private_key))
+            .collect();
+
+        let secret = random_scalar(&mut rng);
+
+        c.bench_function(
+            &format!("(n: {}, t: {}) | Common | Generate Encrypted Shares", n, t),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    generate_encrypted_shares(&mut rng, t, &x_pows, &public_keys, &secret);
+                })
+            },
+        );
+        let (f, encrypted_shares) =
+            generate_encrypted_shares(&mut rng, t, &x_pows, &public_keys, &secret);
+
+        assert_eq!(f.coef_at_unchecked(0), &secret);
+
+        let decrypted_shares: Vec<RistrettoPoint> = encrypted_shares
+            .par_iter()
+            .zip(private_keys.par_iter())
+            .map(|(encrypted_share, private_key)| {
+                decrypt_share(private_key, &encrypted_share.decompress().unwrap())
+            })
+            .collect();
+
+        let qualified_set = select_qualified_set(
+            &mut rng,
+            t,
+            &Some(decrypted_shares),
+            &(0..n).collect::<Vec<usize>>(),
+        )
+        .unwrap();
+
+        let indices: Vec<usize> = qualified_set.iter().map(|(index, _)| *index).collect();
+
+        let lagrange_bases = compute_lagrange_bases(&indices);
+
+        let q = Some(qualified_set);
+
+        let secret_exp = RistrettoPoint::mul_base(&secret);
+
+        c.bench_function(
+            &format!(
+                "(n: {}, t: {}) | Common | Reconstruct Secret Exponent",
+                n, t
+            ),
+            |b| {
+                b.iter_with_large_drop(|| {
+                    assert_eq!(
+                        secret_exp,
+                        reconstruct_secret_exponent(&q, &lagrange_bases).unwrap()
+                    )
+                })
+            },
+        );
+    }
+}
+
+fn gen_encrypted_shares_batch(c: &mut Criterion) {
+    for (n, t) in BENCH_N_T {
+        let mut rng = rand::rng();
+        let x_pows = gen_powers(n, t);
+
+        let private_keys = random_scalars(&mut rng, n);
+
+        let public_keys: Vec<RistrettoPoint> = private_keys
+            .par_iter()
+            .map(|private_key| RistrettoPoint::mul_base(private_key))
+            .collect();
+
+        for k in BENCH_K {
+            let secrets = random_scalars(&mut rng, k);
+
+            c.bench_function(
+                &format!(
+                    "(n: {}, t: {}, k: {}) | Common | Generate Encrypted Shares Batch",
+                    n, t, k
+                ),
+                |b| {
+                    b.iter_with_large_drop(|| {
+                        generate_encrypted_shares_batched(t, &x_pows, &public_keys, &secrets);
+                    })
+                },
+            );
+            let (fk, encrypted_shares) =
+                generate_encrypted_shares_batched(t, &x_pows, &public_keys, &secrets);
+
+            let decrypted_shares: Vec<Vec<RistrettoPoint>> = encrypted_shares
+                .par_iter()
+                .zip(private_keys.par_iter())
+                .map(|(encrypted_shares_i, private_key)| {
+                    encrypted_shares_i
+                        .par_iter()
+                        .map(|encrypted_share| {
+                            decrypt_share(private_key, &encrypted_share.decompress().unwrap())
+                        })
+                        .collect()
+                })
+                .collect();
+
+            let qualified_set = select_qualified_set(
+                &mut rng,
+                t,
+                &Some(decrypted_shares),
+                &(0..n).collect::<Vec<usize>>(),
+            )
+            .unwrap();
+
+            let indices: Vec<usize> = qualified_set.iter().map(|(index, _)| *index).collect();
+
+            let lagrange_bases = compute_lagrange_bases(&indices);
+
+            let q = Some(qualified_set);
+
+            let secret_exps: Vec<RistrettoPoint> = secrets
+                .par_iter()
+                .map(|secret| RistrettoPoint::mul_base(secret))
+                .collect();
+
+            c.bench_function(
+                &format!(
+                    "(n: {}, t: {}, k: {}) | Common | Reconstruct Secrets Exponent",
+                    n, t, k
+                ),
+                |b| {
+                    b.iter_with_large_drop(|| {
+                        assert_eq!(
+                            secret_exps,
+                            reconstruct_secrets_exponent(&q, &lagrange_bases).unwrap()
+                        )
+                    })
+                },
+            );
+        }
+    }
+}
+
 criterion_group!(
     benches,
     // lagrange_basis_bench,
@@ -280,6 +517,10 @@ criterion_group!(
     // hasher_bench
     // eval_bench,
     // sample_bench
-    eval_bench_one
+    // eval_bench_one
+    gen_shares,
+    gen_encrypted_shares,
+    gen_shares_batch,
+    gen_encrypted_shares_batch,
 );
 criterion_main!(benches);

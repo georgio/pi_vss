@@ -1,4 +1,4 @@
-use b_pedersen::{dealer::Dealer, party::generate_parties};
+use b_feldman::{dealer::Dealer, party::generate_parties};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use curve25519_dalek::{RistrettoPoint, ristretto::CompressedRistretto, traits::Identity};
 
@@ -15,17 +15,16 @@ fn vss(c: &mut Criterion) {
         let mut rng = rand::rng();
 
         let generator: RistrettoPoint = random_point(&mut rng);
-        let g2: RistrettoPoint = random_point(&mut rng);
 
         let xpows = gen_powers(n, t);
         for k in BENCH_K {
             let g: Vec<RistrettoPoint> = random_points(&mut rng, k);
-            let mut parties = generate_parties(&generator, &g, &g2, &mut rng, n, t);
+            let mut parties = generate_parties(&generator, &g, &mut rng, n, t);
 
             let public_keys: Vec<CompressedRistretto> =
                 parties.iter().map(|party| party.public_key.0).collect();
 
-            let mut dealer = Dealer::new(g, g2, n, t, &public_keys).unwrap();
+            let mut dealer = Dealer::new(g, n, t, &public_keys).unwrap();
 
             for party in &mut parties {
                 let public_keys: Vec<CompressedRistretto> = public_keys
@@ -45,40 +44,38 @@ fn vss(c: &mut Criterion) {
 
             c.bench_function(
                 &format!(
-                    "(n: {}, t: {}) | B_Pedersen VSS | Dealer: Generate Proof",
+                    "(n: {}, t: {}) | B_Feldman VSS | Dealer: Generate Proof",
                     n, t
                 ),
                 |b| {
                     b.iter_batched(
-                        || vec![CompressedRistretto::identity(); dealer.public_keys.len()],
-                        |mut c_buf| {
-                            dealer.generate_proof(&mut rng, &mut c_buf, &xpows, &f_polynomials)
-                        },
+                        || vec![CompressedRistretto::identity(); t + 1],
+                        |mut c_buf| dealer.generate_proof(&mut c_buf, &f_polynomials),
                         BatchSize::PerIteration,
                     )
                 },
             );
 
-            let (shares, (r_evals, c_vals)) = dealer.deal_secret(&mut rng, &xpows, &secrets);
+            let (shares, c_vals) = dealer.deal_secret(&xpows, &secrets);
 
             let p = &mut parties[0];
             p.ingest_dealer_proof(&c_vals).unwrap();
 
-            p.ingest_share((&shares[p.index - 1], &r_evals[p.index - 1]));
+            p.ingest_share(&shares[p.index - 1]);
             assert!(
                 p.verify_share().unwrap(),
                 "individual share verification failure"
             );
 
-            p.ingest_shares((&shares, &r_evals)).unwrap();
+            p.ingest_shares(&shares).unwrap();
 
             c.bench_function(
                 &format!(
-                    "(n: {}, t: {}) | B_Pedersen VSS | Party: Verify Shares",
+                    "(n: {}, t: {}) | B_Feldman VSS | Party: Verify Shares",
                     n, t
                 ),
                 |b| {
-                    b.iter(|| {
+                    b.iter_with_large_drop(|| {
                         assert!(p.verify_shares().unwrap());
                     })
                 },
